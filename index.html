@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,7 +13,7 @@
   #info { position:fixed; left:16px; top:16px; max-width:min(420px, calc(100vw - 64px)); background:rgba(20,16,14,.82); border:2px solid var(--accent); padding:14px 16px; border-radius:10px; font-size:14px; line-height:1.5; z-index:5; }
   #info h1 { margin:0 0 6px; font-family:Bangers, Impact, sans-serif; font-weight:400; letter-spacing:1px; font-size:34px; color:var(--accent); }
   #info b { color:var(--accent); }
-  #start { margin-top:10px; background:var(--red); color:#fff; border:2px solid #111; border-radius:8px; padding:10px 18px; font:400 22px Bangers, Impact, sans-serif; letter-spacing:1px; cursor:pointer; }
+  #start, #startDef { margin-top:10px; background:var(--red); color:#fff; border:2px solid #111; border-radius:8px; padding:10px 18px; font:400 22px Bangers, Impact, sans-serif; letter-spacing:1px; cursor:pointer; }
   #err { color:#ff8a80; white-space:pre-wrap; font-size:12px; }
 </style>
 <script type="importmap">
@@ -26,16 +26,16 @@
 <body>
 <div id="info">
   <h1>Ring Tsubasa</h1>
-  <div><b>Gogle:</b> kliknij ENTER VR na dole, potem naciśnij spust.</div>
-  <div><b>Kolory:</b> czerwona tarcza to lewa ręka, niebieska to prawa.</div>
-  <div><b>Strzałka</b> na tarczy pokazuje kierunek ciosu: kropka prosty, bok sierpowy, góra podbródkowy.</div>
-  <div><b>Pomarańczowa belka:</b> schyl się. <b>Żółta ściana:</b> unik głową w stronę strzałki.</div>
-  <div><b>Komputer:</b> lewy / prawy przycisk myszy albo F / J to lewa / prawa ręka, bez celowania. C schyl się, A / D unik.</div>
-  <button id="start">START NA KOMPUTERZE</button>
+  <div><b>Headset:</b> press ENTER VR below, then punch a target to pick a mode.</div>
+  <div><b>Combos:</b> red pads are your left hand (L), blue pads your right (R). Numbers are boxing calls: 1 jab, 2 cross, 3 lead hook, 4 rear hook, 5 lead uppercut, 6 rear uppercut.</div>
+  <div><b>Orange bar:</b> roll under it. <b>Yellow wall:</b> slip your head the way the arrow points.</div>
+  <div><b>Don't Get Hit:</b> your rival throws punches, slow at first, then faster. Slip, duck or block with your gloves. Five clean hits and you're out.</div>
+  <div><b>Desktop:</b> left / right mouse button or F / J for left / right hand (hold to block in Don't Get Hit). C to duck, A / D to slip.</div>
+  <button id="start">COMBOS ON DESKTOP</button> <button id="startDef">DON'T GET HIT ON DESKTOP</button>
   <div id="err"></div>
 </div>
 <script>
-  window.addEventListener('error', e => { const el = document.getElementById('err'); if (el) el.textContent += 'Błąd: ' + e.message + '\n'; });
+  window.addEventListener('error', e => { const el = document.getElementById('err'); if (el) el.textContent += 'Error: ' + e.message + '\n'; });
 </script>
 <script type="module">
 import * as THREE from 'three';
@@ -43,7 +43,6 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 
 // ---------- stałe gry ----------
 const BPM = 120, BEAT = 60 / BPM, ROUND_BARS = 40, SPEED = 6, LEAD = 1.8;
-const DEMPSEY_BARS = [20, 21, 34, 35];
 const COL = { L: 0xe8412c, R: 0x2d7ff9 };
 const BANG = 'Bangers, "Noto Sans JP", Impact, sans-serif';
 const JP = '"Noto Sans JP", "Yu Gothic", sans-serif';
@@ -175,16 +174,20 @@ const speedTex = canvasTex(1024, 1024, (g) => {
     g.closePath(); g.fill();
   }
 });
-function symTex(kind) {
+const KEY_NUM = { jabL: 1, jabR: 2, hookL: 3, hookR: 4, upperL: 5, upperR: 6 };
+function symTex(key) {
   return canvasTex(256, 256, (g) => {
     g.strokeStyle = '#fff'; g.lineWidth = 16; g.beginPath(); g.arc(128, 128, 106, 0, Math.PI * 2); g.stroke();
-    g.fillStyle = '#fff';
-    if (kind === 'jab') { g.beginPath(); g.arc(128, 128, 44, 0, Math.PI * 2); g.fill(); return; }
-    const ang = kind === 'hookL' ? 0 : kind === 'hookR' ? Math.PI : -Math.PI / 2;
-    g.translate(128, 128); g.rotate(ang); g.beginPath();
+    g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `400 120px ${BANG}`; g.lineWidth = 12; g.strokeStyle = '#111'; g.lineJoin = 'round';
+    const n = String(KEY_NUM[key]);
+    if (key.startsWith('jab')) { g.strokeText(n, 128, 136); g.fillText(n, 128, 136); return; }
+    const ang = key === 'hookL' ? 0 : key === 'hookR' ? Math.PI : -Math.PI / 2;
+    g.save(); g.translate(128, 128); g.rotate(ang); g.globalAlpha = 0.55; g.beginPath();
     g.moveTo(-62, -18); g.lineTo(8, -18); g.lineTo(8, -52); g.lineTo(70, 0); g.lineTo(8, 52); g.lineTo(8, 18); g.lineTo(-62, 18);
-    g.closePath(); g.fill();
-  }, 'sym' + kind);
+    g.closePath(); g.fill(); g.restore();
+    g.strokeText(n, 128, 136); g.fillText(n, 128, 136);
+  }, 'sym' + key);
 }
 function hazard(g, w, h, band) {
   g.fillStyle = '#ffcf1f'; g.fillRect(0, 0, w, h);
@@ -295,11 +298,11 @@ function buildGym() {
   put(new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.1), toonMat(0xffffff, poster('闘魂', '#c8262d', '#fff4dc'))), 5.5, 1.5, -11.97);
   const gala = canvasTex(256, 384, (g, w, h) => {
     g.fillStyle = '#f4e9d0'; g.fillRect(0, 0, w, h); g.fillStyle = '#c8262d'; g.fillRect(0, 0, w, 90);
-    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; fitFont(g, 'WIELKA GALA', BANG, '400', 58, 230); g.fillText('WIELKA GALA', w / 2, 48);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; fitFont(g, 'FIGHT NIGHT', BANG, '400', 58, 230); g.fillText('FIGHT NIGHT', w / 2, 48);
     g.fillStyle = '#111'; g.beginPath(); g.arc(80, 190, 50, 0, Math.PI * 2); g.arc(176, 190, 50, 0, Math.PI * 2); g.fill();
     g.fillStyle = '#c8262d'; fitFont(g, 'VS', BANG, '400', 60, 80); g.fillText('VS', w / 2, 190);
-    g.fillStyle = '#111'; fitFont(g, 'PAS WAGI PIÓRKOWEJ', SANS, 'bold', 22, 230); g.fillText('PAS WAGI PIÓRKOWEJ', w / 2, 290);
-    fitFont(g, 'SOBOTA 19:00', BANG, '400', 44, 230); g.fillText('SOBOTA 19:00', w / 2, 336);
+    g.fillStyle = '#111'; fitFont(g, 'FEATHERWEIGHT TITLE', SANS, 'bold', 22, 230); g.fillText('FEATHERWEIGHT TITLE', w / 2, 290);
+    fitFont(g, 'SATURDAY 7 PM', BANG, '400', 44, 230); g.fillText('SATURDAY 7 PM', w / 2, 336);
   });
   const galaM = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.8), toonMat(0xffffff, gala)); galaM.rotation.y = Math.PI / 2; put(galaM, -7.97, 1.6, -3);
   const kon = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.8), toonMat(0xffffff, poster('根性', '#2f5d50', '#fff4dc'))); kon.rotation.y = Math.PI / 2; put(kon, -7.97, 1.6, -7);
@@ -307,10 +310,10 @@ function buildGym() {
   // tablica z planem treningu
   const board = canvasTex(512, 340, (g, w, h) => {
     g.fillStyle = '#26433a'; g.fillRect(0, 0, w, h); g.fillStyle = 'rgba(255,255,255,.92)'; g.textBaseline = 'top';
-    g.font = `400 46px ${BANG}`; g.fillText('PLAN NA DZIŚ', 26, 18);
+    g.font = `400 46px ${BANG}`; g.fillText("TODAY'S PLAN", 26, 18);
     g.font = `bold 30px ${SANS}`;
-    ['• bieg 10 km', '• skakanka 3 x 3 min', '• worek 6 rund', '• tarcze, 1 runda'].forEach((l, i) => g.fillText(l, 30, 90 + i * 44));
-    g.font = `400 38px ${BANG}`; g.fillStyle = '#ffd23f'; g.fillText('NIE ODPUSZCZAJ!', 26, 280);
+    ['• roadwork 10 km', '• jump rope 3 x 3 min', '• heavy bag 6 rounds', '• mitts, 1 round'].forEach((l, i) => g.fillText(l, 30, 90 + i * 44));
+    g.font = `400 38px ${BANG}`; g.fillStyle = '#ffd23f'; g.fillText('NEVER GIVE UP!', 26, 280);
   });
   const frame = toon(new THREE.BoxGeometry(0.06, 1.75, 2.55), 0x6b4424, { outline: 0.01 }); put(frame, 7.95, 1.7, -3);
   const bm = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.6), toonMat(0xffffff, board)); bm.rotation.y = -Math.PI / 2; put(bm, 7.91, 1.7, -3);
@@ -406,12 +409,25 @@ function trainerSay(text, force = false) {
 }
 
 // ---------- rękawice ----------
-function makeGlove(color) {
+const CUFF = { L: 0x8f1d10, R: 0x163f95 };
+function letterTex(ch, color) {
+  return canvasTex(128, 128, (g) => {
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(64, 64, 58, 0, Math.PI * 2); g.fill();
+    g.lineWidth = 8; g.strokeStyle = '#111'; g.stroke();
+    g.fillStyle = color; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `400 100px ${BANG}`; g.fillText(ch, 64, 70);
+  }, 'letter' + ch);
+}
+// lewa: czerwona z L, prawa: niebieska z R; kciuk po stronie środka ciała
+function makeGlove(side) {
+  const color = COL[side], sx = side === 'L' ? -1 : 1;
   const g = new THREE.Group();
-  const fist = toon(new THREE.SphereGeometry(0.075, 20, 14), color, { outline: 0.008 }); fist.scale.set(1, 0.95, 1.25); put(fist, 0, 0, -0.02, g);
-  const thumb = toon(new THREE.SphereGeometry(0.03, 10, 8), color, { outline: 0.005 }); put(thumb, 0, 0.04, -0.07, g);
+  const fist = toon(new THREE.SphereGeometry(0.075, 20, 14), color, { outline: 0.009 }); fist.scale.set(1, 0.95, 1.25); put(fist, 0, 0, -0.02, g);
+  const thumb = toon(new THREE.SphereGeometry(0.03, 10, 8), color, { outline: 0.005 }); put(thumb, -sx * 0.06, 0.015, -0.05, g);
   const cuffGeo = new THREE.CylinderGeometry(0.05, 0.056, 0.09, 16); cuffGeo.rotateX(Math.PI / 2);
-  put(toon(cuffGeo, 0xf4f1e8, { outline: 0.006 }), 0, 0, 0.08, g);
+  put(toon(cuffGeo, CUFF[side], { outline: 0.006 }), 0, 0, 0.08, g);
+  const lm = new THREE.MeshBasicMaterial({ map: letterTex(side, side === 'L' ? '#e8412c' : '#2d7ff9'), alphaTest: 0.5, fog: false });
+  const top = new THREE.Mesh(new THREE.PlaneGeometry(0.085, 0.085), lm); top.rotation.x = -Math.PI / 2; put(top, 0, 0.073, -0.02, g);
+  const out = new THREE.Mesh(new THREE.PlaneGeometry(0.075, 0.075), lm); out.rotation.y = sx * Math.PI / 2; put(out, sx * 0.077, 0, -0.02, g);
   return g;
 }
 
@@ -455,43 +471,67 @@ const sfxOuch = () => { const t = actx.currentTime; tone(t, 'square', 180, 90, 0
 
 // ---------- układ rundy ----------
 function rng32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
-const PATTERNS = {
-  j1: [[0, 'L', 'jab'], [1, 'L', 'jab'], [2, 'R', 'jab']],
-  j2: [[0, 'L', 'jab'], [1, 'R', 'jab'], [2, 'L', 'hook']],
-  j3: [[0, 'L', 'jab'], [1, 'R', 'jab'], [2, 'L', 'hook'], [3, 'R', 'jab']],
-  up: [[0, 'L', 'jab'], [1, 'R', 'upper'], [2, 'L', 'hook'], [3, 'R', 'jab']],
-  up2: [[0, 'R', 'upper'], [1, 'L', 'upper'], [2, 'R', 'hook'], [3, 'L', 'hook']],
-  duck: [[0, 'duck'], [2, 'L', 'hook'], [3, 'R', 'hook']],
-  weave: [[0, 'wallL'], [1, 'R', 'hook'], [2, 'wallR'], [3, 'L', 'hook']],
-  fast: [[0, 'L', 'jab'], [0.5, 'L', 'jab'], [1, 'R', 'jab'], [2, 'L', 'hook'], [3, 'R', 'upper']],
-};
-const TIERS = [['j1', 'j2'], ['j2', 'j3', 'duck', 'up'], ['j3', 'up', 'up2', 'duck', 'weave', 'fast']];
+// Numeracja bokserska, postawa klasyczna (lewa ręka z przodu):
+// 1 prosty, 2 prosty tylny, 3 sierp przedni, 4 sierp tylny, 5 podbródkowy przedni, 6 podbródkowy tylny.
+// SL unik głową w lewo, SR unik w prawo, RO zejście pod ciosem (roll).
+const NUM = { 1: ['L', 'jab'], 2: ['R', 'jab'], 3: ['L', 'hook'], 4: ['R', 'hook'], 5: ['L', 'upper'], 6: ['R', 'upper'] };
+const DEF = { SL: 'wallR', SR: 'wallL', RO: 'duck' };
+const COMBOS = [
+  { name: '1-2', words: 'JAB, CROSS', lvl: 0, seq: '1 2' },
+  { name: '1-1-2', words: 'DOUBLE JAB, CROSS', lvl: 0, seq: '1 1 2' },
+  { name: '1-2-3', words: 'JAB, CROSS, HOOK', lvl: 0, seq: '1 2 3' },
+  { name: '1-2 SLIP', words: 'JAB, CROSS, SLIP LEFT', lvl: 0, seq: '1 2 SL' },
+  { name: '2-3-2', words: 'CROSS, HOOK, CROSS', lvl: 1, seq: '2 3 2' },
+  { name: '1-2-3-2', words: 'JAB, CROSS, HOOK, CROSS', lvl: 1, seq: '1 2 3 2' },
+  { name: '1-6-3-2', words: 'JAB, UPPERCUT, HOOK, CROSS', lvl: 1, seq: '1 6 3 2' },
+  { name: '5-2-3', words: 'UPPERCUT, CROSS, HOOK', lvl: 1, seq: '5 2 3' },
+  { name: '1-2 SLIP 2', words: 'SLIP RIGHT, COUNTER CROSS', lvl: 1, seq: '1 2 SR 2' },
+  { name: '1 SLIP 3-2', words: 'SLIP LEFT, HOOK BACK', lvl: 1, seq: '1 SL 3 2' },
+  { name: '1-2-3 ROLL 3-2', words: 'ROLL UNDER, FIRE BACK', lvl: 2, seq: '1 2 3 RO 3 2' },
+  { name: 'SLIP SLIP 2-3-2', words: 'SLIP BOTH WAYS, COUNTER', lvl: 2, seq: 'SL SR 2 3 2' },
+  { name: '1-2 ROLL 2-3-2', words: 'ROLL, THEN FINISH', lvl: 2, seq: '1 2 RO 2 3 2' },
+  { name: '3-2-3', words: 'HOOK, CROSS, HOOK', lvl: 2, seq: '3 2 3' },
+  { name: '1-1-2-3-2', words: 'FAST HANDS', lvl: 2, seq: '1 1 2 3 2', step: 0.5 },
+  { name: '1-2-5-2', words: 'JAB, CROSS, UPPERCUT, CROSS', lvl: 2, seq: '1 2 5 2', step: 0.5 },
+];
+const DEMPSEY = { name: 'DEMPSEY ROLL', words: 'WEAVE AND HOOK', lvl: 2, seq: 'SL 3 SR 4 SL 3 SR 4' };
+function comboEvents(c, t0) {
+  const ev = [{ kind: 'announce', t: t0 - 0.001, combo: c }];
+  const step = (c.step || 1) * BEAT;
+  c.seq.split(' ').forEach((tok, i) => {
+    const t = t0 + i * step;
+    if (NUM[tok]) { const [hand, punch] = NUM[tok]; ev.push({ kind: 'pad', t, hand, punch, key: punch + hand, num: +tok, combo: c.name }); }
+    else ev.push({ kind: DEF[tok], t, combo: c.name });
+  });
+  return { ev, dur: c.seq.split(' ').length * step };
+}
 function buildChart() {
-  const r = rng32(Date.now() & 0xffffffff), ev = [];
-  for (let bar = 2; bar < ROUND_BARS; bar++) {
-    let name;
-    if (DEMPSEY_BARS.includes(bar)) name = 'weave';
+  const r = rng32(Date.now() & 0xffffffff), ev = [], end = ROUND_BARS * 4 * BEAT - 2 * BEAT;
+  let t = 8 * BEAT, last = null, dempseys = 0;
+  while (t < end) {
+    const p = t / end;
+    let c;
+    if ((p > 0.5 && dempseys === 0) || (p > 0.85 && dempseys === 1)) { c = DEMPSEY; dempseys++; }
     else {
-      if (bar % 8 === 7) continue;
-      const list = TIERS[bar < 10 ? 0 : bar < 22 ? 1 : 2]; name = list[Math.floor(r() * list.length)];
+      const lvl = p < 0.3 ? 0 : p < 0.65 ? 1 : 2;
+      const pool = COMBOS.filter(x => x.lvl <= lvl && x !== last);
+      const weighted = pool.flatMap(x => (x.lvl === lvl ? [x, x] : [x]));
+      c = weighted[Math.floor(r() * weighted.length)];
     }
-    for (const p of PATTERNS[name]) {
-      const t = (bar * 4 + p[0]) * BEAT;
-      ev.push(p.length === 3 ? { kind: 'pad', t, hand: p[1], punch: p[2], key: p[2] + p[1] } : { kind: p[1], t });
-    }
+    const { ev: ce, dur } = comboEvents(c, t);
+    if (t + dur > end + 2 * BEAT) break;
+    ev.push(...ce); last = c;
+    t += Math.ceil((dur + 2 * BEAT) / BEAT) * BEAT;
   }
-  for (const b of DEMPSEY_BARS) if (!DEMPSEY_BARS.includes(b - 1)) ev.push({ kind: 'announce', t: (b * 4 - 2) * BEAT + LEAD });
   return ev.sort((a, b) => a.t - b.t);
 }
+window.__COMBOS = { COMBOS, DEMPSEY, NUM, DEF };
 
 // ---------- tarcze i przeszkody ----------
 const PAD_GEO = new THREE.CylinderGeometry(0.15, 0.15, 0.08, 28); PAD_GEO.rotateX(Math.PI / 2);
 const FACE_GEO = new THREE.PlaneGeometry(0.27, 0.27);
 const faceMats = {};
-for (const k of Object.keys(PAD_OFF)) {
-  const kind = k.startsWith('jab') ? 'jab' : k.startsWith('upper') ? 'upper' : k;
-  faceMats[k] = new THREE.MeshBasicMaterial({ map: symTex(kind), alphaTest: 0.5, fog: false });
-}
+for (const k of Object.keys(PAD_OFF)) faceMats[k] = new THREE.MeshBasicMaterial({ map: symTex(k), alphaTest: 0.5, fog: false });
 function makePad(e) {
   const g = new THREE.Group();
   g.add(toon(PAD_GEO, COL[e.hand], { outline: 0.018 }));
@@ -502,13 +542,13 @@ function makePad(e) {
 const duckTex = canvasTex(1024, 96, (g, w, h) => {
   hazard(g, w, h, 10); g.fillStyle = '#ff7a1a'; g.fillRect(10, 10, w - 20, h - 20);
   g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `400 64px ${BANG}`;
-  for (const x of [170, 512, 854]) g.fillText('SCHYL SIĘ', x, h / 2 + 3);
+  for (const x of [170, 512, 854]) g.fillText('ROLL UNDER', x, h / 2 + 3);
   for (const x of [40, 340, 680, 984]) arrow(g, x, h / 2, Math.PI / 2, 0.8);
 });
 function wallTex(dir) {
   return canvasTex(512, 360, (g, w, h) => {
     hazard(g, w, h, 28); g.fillStyle = '#ffe680'; g.fillRect(28, 28, w - 56, h - 56);
-    g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `400 110px ${BANG}`; g.fillText('UNIK', w / 2, 120);
+    g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `400 110px ${BANG}`; g.fillText('SLIP', w / 2, 120);
     arrow(g, w / 2, 250, dir > 0 ? 0 : Math.PI, 1.6);
   });
 }
@@ -522,11 +562,11 @@ function makeObstacle(kind) {
 
 // ---------- efekty ----------
 const fx = [];
-function popWord(text, pos, fill = '#fff', size = 1, life = 0.7) {
+function popWord(text, pos, fill = '#fff', size = 1, life = 0.7, drift = null) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex(text, fill), transparent: true, depthTest: false, depthWrite: false, fog: false }));
   s.renderOrder = 10; s.position.copy(pos);
   scene.add(s);
-  fx.push({ obj: s, t: 0, life, size, kind: 'word', drift: new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.6, -0.5) });
+  fx.push({ obj: s, t: 0, life, size, kind: 'word', drift: drift || new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.6, -0.5) });
 }
 function popBurst(pos, size) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: burstTex, transparent: true, depthWrite: false, fog: false }));
@@ -561,32 +601,55 @@ hud.position.set(0, 2.6, -3.6); scene.add(hud);
 const bigText = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex('3'), transparent: true, depthTest: false, fog: false }));
 bigText.renderOrder = 15; bigText.visible = false; scene.add(bigText);
 
-let best = 0;
-try { best = +localStorage.getItem('tsubasa-best') || 0; } catch (e) { /* bez zapisu */ }
+const bestOf = { combo: 0, defense: 0 };
+try { bestOf.combo = +localStorage.getItem('tsubasa-best') || 0; bestOf.defense = +localStorage.getItem('tsubasa-best-def') || 0; } catch (e) { /* bez zapisu */ }
+function hearts(g, x, y, n, of) {
+  for (let i = 0; i < of; i++) {
+    const cx = x + (i - (of - 1) / 2) * 62;
+    g.fillStyle = i < n ? '#ff4a3d' : '#3a312a';
+    g.beginPath(); g.moveTo(cx, y + 18); g.bezierCurveTo(cx - 34, y - 6, cx - 18, y - 30, cx, y - 12);
+    g.bezierCurveTo(cx + 18, y - 30, cx + 34, y - 6, cx, y + 18); g.fill();
+  }
+}
 function drawHUD() {
-  const g = hudG, w = 1024, h = 320;
+  hudDirty = false;
+  const g = hudG, w = 1024, h = 320, vr = renderer.xr.isPresenting;
   g.clearRect(0, 0, w, h);
   g.fillStyle = 'rgba(20,16,14,.88)'; g.strokeStyle = '#ffd23f'; g.lineWidth = 8;
   g.beginPath(); g.roundRect(6, 6, w - 12, h - 12, 28); g.fill(); g.stroke();
   g.textAlign = 'center'; g.textBaseline = 'middle';
   if (state === 'menu') {
     g.fillStyle = '#ffd23f'; g.font = `400 120px ${BANG}`; g.fillText('RING TSUBASA', w / 2, 120);
-    g.fillStyle = '#fff4dc'; g.font = `bold 44px ${SANS}`; g.fillText(renderer.xr.isPresenting ? 'Naciśnij spust, żeby zacząć' : 'Kliknij START NA KOMPUTERZE', w / 2, 236);
+    g.fillStyle = '#fff4dc'; g.font = `bold 44px ${SANS}`; g.fillText(vr ? 'Punch a target to pick a mode' : 'Pick a mode in the panel on the left', w / 2, 236);
+  } else if (state === 'end' && mode === 'defense') {
+    g.fillStyle = '#ff5a4a'; g.font = `400 88px ${BANG}`; g.fillText('KNOCKED OUT', w / 2, 70);
+    g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`;
+    g.fillText(`Survived ${thrown - taken} of ${thrown} punches · Slipped ${dodged} · Blocked ${blocked}`, w / 2, 160);
+    g.fillText(`Score ${score} · Best ${bestOf.defense}`, w / 2, 212);
+    g.fillStyle = '#ffd23f'; g.fillText(vr ? 'Punch a target to go again' : 'Pick a mode to go again', w / 2, 272);
   } else if (state === 'end') {
-    g.fillStyle = '#ffd23f'; g.font = `400 88px ${BANG}`; g.fillText('KONIEC RUNDY', w / 2, 70);
+    g.fillStyle = '#ffd23f'; g.font = `400 88px ${BANG}`; g.fillText('ROUND OVER', w / 2, 70);
     g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`;
     const acc = padsSeen ? Math.round(hits / padsSeen * 100) : 0;
-    g.fillText(`Punkty ${score} · Combo ${maxCombo} · Celność ${acc}%`, w / 2, 160);
-    g.fillText(`Uniki ${dodgeOk}/${dodgeSeen} · Rekord ${best}`, w / 2, 212);
-    g.fillStyle = '#ffd23f'; g.fillText(renderer.xr.isPresenting ? 'Spust: jeszcze raz' : 'Kliknij START: jeszcze raz', w / 2, 272);
+    g.fillText(`Score ${score} · Best combo ${maxCombo} · Accuracy ${acc}%`, w / 2, 160);
+    g.fillText(`Dodges ${dodgeOk}/${dodgeSeen} · Best ${bestOf.combo}`, w / 2, 212);
+    g.fillStyle = '#ffd23f'; g.fillText(vr ? 'Punch a target to go again' : 'Pick a mode to go again', w / 2, 272);
+  } else if (mode === 'defense') {
+    g.fillStyle = '#fff4dc'; g.font = `bold 34px ${SANS}`;
+    g.fillText('SCORE', 180, 70); g.fillText('LIVES', w / 2, 70); g.fillText('SPEED', w - 180, 70);
+    g.fillStyle = '#ffd23f'; g.font = `400 110px ${BANG}`;
+    g.fillText(String(score), 180, 170); g.fillText('x' + (1.7 / punchDur()).toFixed(1), w - 180, 170);
+    hearts(g, w / 2, 165, lives, 5);
+    g.fillStyle = '#fff4dc'; g.font = `bold 32px ${SANS}`; g.fillText(`Slipped ${dodged} · Blocked ${blocked} · Hit ${taken}`, w / 2, 262);
   } else {
     const left = Math.max(0, Math.ceil(ROUND_BARS * 4 * BEAT - (state === 'fight' ? songTime() : 0)));
     g.fillStyle = '#fff4dc'; g.font = `bold 34px ${SANS}`;
-    g.fillText('PUNKTY', 180, 70); g.fillText('COMBO', w / 2, 70); g.fillText('CZAS', w - 180, 70);
+    g.fillText('SCORE', 180, 70); g.fillText('COMBO', w / 2, 70); g.fillText('TIME', w - 180, 70);
     g.fillStyle = '#ffd23f'; g.font = `400 110px ${BANG}`;
     g.fillText(String(score), 180, 170); g.fillText('x' + combo, w / 2, 170);
     g.fillText(`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`, w - 180, 170);
-    g.fillStyle = '#fff4dc'; g.font = `bold 32px ${SANS}`; g.fillText(`mnożnik x${mult()}`, w / 2, 250);
+    g.fillStyle = '#fff4dc'; g.font = `bold 32px ${SANS}`;
+    g.fillText(comboName ? `${comboName} · ${comboWords}` : `multiplier x${mult()}`, w / 2, 250);
     const p = state === 'fight' ? Math.min(1, songTime() / (ROUND_BARS * 4 * BEAT)) : 0;
     g.fillStyle = '#3a312a'; g.fillRect(60, 280, w - 120, 14); g.fillStyle = '#e8412c'; g.fillRect(60, 280, (w - 120) * p, 14);
   }
@@ -595,6 +658,10 @@ function drawHUD() {
 
 // ---------- stan gry ----------
 let state = 'menu', score = 0, combo = 0, maxCombo = 0, hits = 0, misses = 0, padsSeen = 0, dodgeOk = 0, dodgeSeen = 0;
+let mode = 'combo', lastMode = 'combo', comboName = '', comboWords = '', hudDirty = false;
+// tryb obrony
+let lives = 5, thrown = 0, dodged = 0, blocked = 0, taken = 0, nextPunchAt = 0;
+const punches = [];
 let chart = [], chartIdx = 0, startTime = 0, nextBeat = 0, cdStart = 0, lastHudSec = -1;
 const base = new THREE.Vector3(), head = new THREE.Vector3(), active = [];
 let vnow = null; // zegar wirtualny dla testów, w grze zawsze null
@@ -603,40 +670,51 @@ const aNow = () => vnow ?? actx.currentTime;
 const songTime = () => aNow() - startTime;
 const mult = () => 1 + Math.min(3, Math.floor(combo / 10));
 
-function startCountdown() {
+function startCountdown(m = lastMode) {
   initAudio(); actx.resume();
   document.getElementById('info').style.display = 'none';
   for (const a of active) scene.remove(a.obj); active.length = 0;
+  clearPunches();
+  mode = m; lastMode = m;
   score = combo = maxCombo = hits = misses = padsSeen = dodgeOk = dodgeSeen = 0;
+  lives = 5; thrown = dodged = blocked = taken = 0; comboName = comboWords = '';
+  rival.visible = mode === 'defense';
   state = 'countdown'; cdStart = nowS();
-  trainerSay('Pokaż mi swoje pięści!', true); drawHUD();
+  trainerSay(mode === 'defense' ? 'Hands up and move your head!' : 'Show me those fists!', true); drawHUD();
 }
 function updateCountdown() {
   const e = nowS() - cdStart, n = 3 - Math.floor(e);
   bigText.visible = true;
   bigText.position.set(head.x, head.y - 0.1, head.z - 2.2);
-  bigText.material.map = wordTex(n > 0 ? String(n) : 'WALKA!', n > 0 ? '#fff' : '#ffd23f');
+  bigText.material.map = wordTex(n > 0 ? String(n) : 'FIGHT!', n > 0 ? '#fff' : '#ffd23f');
   const s = n > 0 ? 0.7 + (e % 1) * 0.3 : 1.2; bigText.scale.set(1.2 * s, 0.6 * s, 1);
   if (e >= 3) {
-    base.copy(head); chart = buildChart(); chartIdx = 0; nextBeat = 0;
+    base.copy(head); chartIdx = 0; nextBeat = 0;
+    chart = mode === 'combo' ? (window.__testChart ? window.__testChart() : buildChart()) : [];
     startTime = aNow() + 0.05; bell(actx.currentTime, 1);
+    if (mode === 'defense') { placeRival(); nextPunchAt = aNow() + 1.2; }
     state = 'fight';
   }
 }
 function endRound() {
-  state = 'end'; bell(actx.currentTime, 3);
+  state = 'end'; bell(actx.currentTime, 3); menuArmAt = nowS() + 1.2;
   if (!renderer.xr.isPresenting) document.getElementById('info').style.display = '';
-  if (score > best) { best = score; try { localStorage.setItem('tsubasa-best', String(best)); } catch (e) { /* bez zapisu */ } }
-  trainerSay(score >= best ? 'Nowy rekord! Świetna robota, młody!' : 'Dobra runda. Jutro znowu!', true);
+  const key = mode === 'defense' ? 'tsubasa-best-def' : 'tsubasa-best';
+  const rec = score > bestOf[mode];
+  if (rec) { bestOf[mode] = score; try { localStorage.setItem(key, String(score)); } catch (e) { /* bez zapisu */ } }
+  if (mode === 'defense') {
+    popWord('K.O.', new THREE.Vector3(head.x, head.y + 0.1, head.z - 1.6), '#ff5a4a', 3, 1.8); flashSpeedLines();
+    trainerSay(rec ? 'New record! You lasted longer than ever!' : 'Get up, kid. Again!', true);
+  } else trainerSay(rec ? 'New record! Great work, kid!' : 'Good round. Again tomorrow!', true);
   drawHUD();
 }
 function scheduleMusic() {
-  const ahead = aNow() + 0.25, lastIdx = (ROUND_BARS + 1) * 8;
+  const ahead = aNow() + 0.25, lastIdx = mode === 'defense' ? Infinity : (ROUND_BARS + 1) * 8;
   while (nextBeat < lastIdx) {
     const t = startTime + nextBeat * BEAT / 2;
     if (t > ahead) break;
     const bar = Math.floor(nextBeat / 8), pos = nextBeat % 8;
-    if (bar < ROUND_BARS && vnow === null) {
+    if ((bar < ROUND_BARS || mode === 'defense') && vnow === null) {
       if (pos % 2 === 0) kick(t);
       if (bar >= 2 && (pos === 2 || pos === 6)) snare(t);
       hat(t, pos % 2 === 1);
@@ -648,14 +726,17 @@ function scheduleMusic() {
 }
 function spawn(e) {
   if (e.kind === 'announce') {
-    popWord('DEMPSEY ROLL!', new THREE.Vector3(base.x, base.y + 0.3, base.z - 2.2), '#ffd23f', 2.2, 1.4);
-    trainerSay('Teraz! Dempsey Roll! Głowa w ruchu!', true); flashSpeedLines();
+    const c = e.combo; comboName = c.name; comboWords = c.words; hudDirty = true;
+    const d = c === DEMPSEY;
+    popWord(c.name, new THREE.Vector3(base.x - 1.05, base.y + 0.15, base.z - 4), d ? '#ffd23f' : '#fff4dc', d ? 2.6 : 1.9, 1.6, new THREE.Vector3(0, 0.04, 0));
+    if (d) { trainerSay('Now! Dempsey Roll! Keep that head moving!', true); flashSpeedLines(); }
     return;
   }
   const a = { e, state: 'fly', z: 0 };
   if (e.kind === 'pad') {
     const off = PAD_OFF[e.key];
-    a.obj = makePad(e); a.x = base.x + off[0]; a.y = base.y + off[1]; a.zHit = base.z + off[2];
+    a.obj = makePad(e); a.ox = off[0]; a.oy = off[1];
+    a.x = head.x + off[0]; a.y = head.y + off[1]; a.zHit = base.z + off[2];
     padsSeen++;
   } else {
     a.obj = makeObstacle(e.kind); a.zHit = base.z;
@@ -668,6 +749,7 @@ function spawn(e) {
 function removeActive(i) { scene.remove(active[i].obj); active.splice(i, 1); }
 function hitPad(a, side, vel, h) {
   const e = a.e, correct = side === e.hand, speed = vel.length();
+  e.res = correct ? 'hit' : 'wrong';
   const dirOK = tmpA.copy(vel).normalize().dot(PUNCH_DIR[e.key]) > 0.35;
   const perfect = correct && dirOK && Math.abs(a.z - a.zHit) < 0.3;
   if (correct) { combo++; maxCombo = Math.max(maxCombo, combo); }
@@ -679,31 +761,30 @@ function hitPad(a, side, vel, h) {
   popBurst(pos, speed > 4 ? 1.4 : 1);
   const word = speed > 4.2 ? pick(['DOOM!', 'ドン!']) : speed > 2.6 ? pick(['BAM!', 'POW!', 'バン!']) : 'PAK!';
   popWord(word, pos.clone().add(new THREE.Vector3(side === 'L' ? -0.15 : 0.15, 0.18, 0)), speed > 4.2 ? '#ffd23f' : '#fff', speed > 4.2 ? 1.5 : 1);
-  if (perfect) popWord('IDEALNIE!', pos.clone().add(new THREE.Vector3(0, -0.2, 0)), '#7dff8a', 0.7, 0.55);
-  if (!correct) popWord('ZŁA RĘKA', pos.clone().add(new THREE.Vector3(0, -0.2, 0)), '#bbbbbb', 0.6, 0.55);
+  if (perfect) popWord('PERFECT!', pos.clone().add(new THREE.Vector3(0, -0.2, 0)), '#7dff8a', 0.7, 0.55);
   if ((perfect && speed > 3.5) || (combo > 0 && combo % 10 === 0 && correct)) flashSpeedLines();
   if (correct && combo > 0 && combo % 10 === 0) {
     popWord(`COMBO ${combo}!`, new THREE.Vector3(base.x, base.y + 0.35, base.z - 1.8), '#ffd23f', 1.6, 1);
-    trainerSay(pick(['Dobrze! Tak trzymaj!', 'Właśnie tak, młody!', 'Czuję ten cios stąd!']), true);
+    trainerSay(pick(['Good! Keep it up!', 'That is it, kid!', 'I felt that one from here!']), true);
   }
   sfxHit(speed);
   if (h) buzz(h, Math.min(1, 0.3 + speed / 6), 60);
 }
 function missPad(a) {
-  combo = 0; misses++;
-  popWord('PUDŁO', new THREE.Vector3(base.x + (a.x - base.x) * 2, a.y, base.z - 1.2), '#bbbbbb', 0.8, 0.5);
-  if (misses % 3 === 0) trainerSay(pick(['Ręce wyżej!', 'Nie śpij!', 'Patrz na tarczę!']));
+  a.e.res = 'miss'; combo = 0; misses++;
+  popWord('MISS', new THREE.Vector3(base.x + (a.x - base.x) * 2, a.y, base.z - 1.2), '#bbbbbb', 0.8, 0.5);
+  if (misses % 3 === 0) trainerSay(pick(['Hands up!', 'Wake up!', 'Watch the pads!']));
 }
 function checkDodge(a) {
   dodgeSeen++;
   const k = a.e.kind;
   const ok = k === 'duck' ? head.y < base.y - 0.2 : k === 'wallL' ? head.x > base.x + 0.12 : head.x < base.x - 0.12;
   const at = new THREE.Vector3(base.x, base.y + 0.15, base.z - 0.8);
-  if (ok) { dodgeOk++; score += 50 * mult(); popWord('UNIK!', at, '#7dff8a', 1); sfxWhoosh(); }
+  if (ok) { dodgeOk++; score += 50 * mult(); popWord(k === 'duck' ? 'ROLL!' : 'SLIP!', at, '#7dff8a', 1); sfxWhoosh(); }
   else {
-    combo = 0; popWord('AUĆ!', at, '#ff5a4a', 1.4); sfxOuch();
+    combo = 0; popWord('OUCH!', at, '#ff5a4a', 1.4); sfxOuch();
     for (const h of hands) if (h.has) buzz(h, 1, 120);
-    trainerSay(k === 'duck' ? 'Schyl się niżej!' : 'Głowa w ruchu!');
+    trainerSay(k === 'duck' ? 'Get lower!' : 'Move your head!');
   }
 }
 function updateChart() {
@@ -721,6 +802,9 @@ function updateObjects(dt) {
       a.obj.position.set(a.x, a.y, a.z);
       a.obj.scale.setScalar(Math.min(1, (LEAD - (a.e.t - st)) / 0.25));
       if (a.e.kind === 'pad') {
+        // tarcza podąża za głową: po uniku w bok cios idzie tam, gdzie naturalnie leci ręka
+        const kf = Math.min(1, dt * 8);
+        a.x += (head.x + a.ox - a.x) * kf; a.y += (head.y + a.oy - a.y) * kf;
         a.obj.rotation.z = Math.sin(st * 6 + i) * 0.12;
         if (a.z > a.zHit + 0.4) { missPad(a); removeActive(i); }
       } else if (a.z >= a.zHit - 0.25) { checkDodge(a); removeActive(i); }
@@ -734,6 +818,175 @@ function updateObjects(dt) {
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 function buzz(h, amp, ms) { try { h.src?.gamepad?.hapticActuators?.[0]?.pulse(amp, ms); } catch (e) { /* brak wibracji */ } }
 
+// ---------- rywal: tryb Don't Get Hit ----------
+// Rywal stoi twarzą do gracza (+z). Jego lewa ręka jest po jego lewej, czyli po prawej stronie gracza (+x).
+const rival = new THREE.Group(); rival.visible = false; scene.add(rival);
+const RSH = { L: new THREE.Vector3(0.26, 1.46, 0.02), R: new THREE.Vector3(-0.26, 1.46, 0.02) };
+const RGUARD = { L: new THREE.Vector3(0.14, 1.5, 0.3), R: new THREE.Vector3(-0.14, 1.52, 0.26) };
+const rGloves = {}, rArms = {}, UP = new THREE.Vector3(0, 1, 0);
+function buildRival() {
+  const skin = 0xe9b48a;
+  put(toon(new THREE.CylinderGeometry(0.09, 0.08, 0.85, 10), skin), 0.12, 0.42, 0, rival);
+  put(toon(new THREE.CylinderGeometry(0.09, 0.08, 0.85, 10), skin), -0.12, 0.42, 0, rival);
+  put(toon(new THREE.CylinderGeometry(0.22, 0.2, 0.34, 14), 0x6a2c91, { outline: 0.02 }), 0, 0.9, 0, rival);
+  put(toon(new THREE.CylinderGeometry(0.225, 0.225, 0.05, 14), 0xf4f1e8, { outline: 0 }), 0, 1.06, 0, rival);
+  put(toon(new THREE.CapsuleGeometry(0.22, 0.36, 4, 12), skin, { outline: 0.02 }), 0, 1.3, 0, rival);
+  put(toon(new THREE.SphereGeometry(0.15, 16, 12), skin, { outline: 0.012 }), 0, 1.72, 0, rival);
+  put(toon(new THREE.CylinderGeometry(0.156, 0.156, 0.045, 16), 0xd7263d, { outline: 0.005 }), 0, 1.77, 0, rival);
+  const spike = new THREE.ConeGeometry(0.05, 0.2, 6);
+  for (let i = 0; i < 8; i++) {
+    const a = i / 8 * Math.PI * 2, m = toon(spike, 0x16110e, { outline: 0.006 });
+    m.position.set(Math.cos(a) * 0.08, 1.86, Math.sin(a) * 0.08 - 0.02);
+    m.rotation.set(Math.sin(a) * 0.9, 0, -Math.cos(a) * 0.9); rival.add(m);
+  }
+  for (const x of [0.055, -0.055]) put(toon(new THREE.BoxGeometry(0.045, 0.02, 0.01), 0x111111, { outline: 0 }), x, 1.73, 0.145, rival);
+  put(toon(new THREE.BoxGeometry(0.07, 0.012, 0.01), 0x7a2e24, { outline: 0 }), 0, 1.64, 0.145, rival);
+  const armGeo = new THREE.CylinderGeometry(0.05, 0.05, 1, 8);
+  for (const s of ['L', 'R']) {
+    rGloves[s] = toon(new THREE.SphereGeometry(0.1, 16, 12), 0xffc21f, { outline: 0.014 });
+    rGloves[s].scale.set(1, 0.95, 1.2); scene.add(rGloves[s]);
+    rArms[s] = toon(armGeo, skin, { outline: 0.01 }); scene.add(rArms[s]);
+  }
+}
+function placeRival() {
+  const sc = (base.y + 0.06) / 1.72;
+  rival.scale.setScalar(sc);
+  rival.position.set(base.x, 0, base.z - 1.25);
+  rival.rotation.set(0, 0, 0);
+}
+function setArm(m, a, b) {
+  tmpA.subVectors(b, a); const len = tmpA.length();
+  m.position.addVectors(a, b).multiplyScalar(0.5); m.scale.set(1, len, 1);
+  m.quaternion.setFromUnitVectors(UP, tmpA.normalize());
+}
+const rWorld = (v) => rival.localToWorld(v.clone());
+// Ciosy rywala: prosty z lewej i prawej, sierpy od boku. Najpierw wolno, potem coraz szybciej.
+const PKIND = { jab: { hand: 'L', side: 0 }, cross: { hand: 'R', side: 0 }, hookL: { hand: 'L', side: 1 }, hookR: { hand: 'R', side: -1 } };
+const punchDur = () => Math.max(0.38, 1.7 * Math.pow(0.95, thrown));
+const windDur = () => Math.max(0.2, 0.6 * Math.pow(0.965, thrown));
+const gapDur = () => Math.max(0.35, 1.3 * Math.pow(0.95, thrown));
+const glint = new THREE.Sprite(new THREE.SpriteMaterial({ map: burstTex, transparent: true, depthWrite: false, fog: false, color: 0xffe066 }));
+glint.visible = false; glint.renderOrder = 9; scene.add(glint);
+const hitFlash = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2), new THREE.MeshBasicMaterial({ color: 0xff2a1a, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false }));
+hitFlash.renderOrder = 21; hitFlash.position.set(0, 0, -0.3); hitFlash.visible = false; camera.add(hitFlash);
+let flashT = 0;
+function clearPunches() { punches.length = 0; glint.visible = false; }
+function throwPunch(kind) {
+  const k = PKIND[kind], now = aNow();
+  const S = rWorld(RGUARD[k.hand]);
+  const E = head.clone().add(new THREE.Vector3(k.side * 0.05, -0.01, 0));
+  const C = S.clone().lerp(E, 0.5);
+  if (k.side) C.add(new THREE.Vector3(k.side * 0.75, 0.05, 0));
+  punches.push({ kind, hand: k.hand, S, C, E, t0: now, wind: windDur(), dur: punchDur(), phase: 'wind', res: null });
+  thrown++;
+}
+function punchPos(p, u, out) {
+  const a = 1 - u; // krzywa Béziera 2. stopnia; prosty ma punkt kontrolny na linii
+  return out.set(a * a * p.S.x + 2 * a * u * p.C.x + u * u * p.E.x, a * a * p.S.y + 2 * a * u * p.C.y + u * u * p.E.y, a * a * p.S.z + 2 * a * u * p.C.z + u * u * p.E.z);
+}
+function playerGloves() {
+  if (renderer.xr.isPresenting) return hands.filter(h => h.has).map(h => ({ pos: h.pos, h }));
+  return deskGloves.map((g, i) => ({ pos: g.getWorldPosition(new THREE.Vector3()), h: null, up: deskGuard[i ? 'R' : 'L'] })).filter(x => x.up);
+}
+function resolvePunch(p, res, gl) {
+  p.res = res; p.phase = 'back'; p.tBack = aNow(); p.from = rGloves[p.hand].position.clone();
+  const at = new THREE.Vector3(head.x, head.y + 0.15, head.z - 0.7);
+  if (res === 'block') {
+    blocked++; score += 50 + 5 * thrown; popWord('BLOCK!', at, '#7dd3ff', 1.1); sfxHit(2);
+    if (gl && gl.h) buzz(gl.h, 0.7, 70);
+  } else if (res === 'dodge') {
+    dodged++; score += 100 + 10 * thrown; popWord(pick(['SLIP!', 'DODGE!', 'NICE!']), at, '#7dff8a', 1.1); sfxWhoosh();
+  } else {
+    taken++; lives--; popWord(pick(['OUCH!', 'BAM!', 'ドン!']), at, '#ff5a4a', 1.5); sfxOuch(); sfxHit(5);
+    flashT = 0.35; hitFlash.visible = true;
+    for (const h of hands) if (h.has) buzz(h, 1, 140);
+    trainerSay(pick(['Hands up!', 'Move your head!', 'Watch his shoulders!']));
+  }
+  hudDirty = true;
+  if (lives <= 0) endRound();
+}
+function updateDefense(dt) {
+  const now = aNow();
+  // rywal kołysze się w rytmie
+  rival.position.x = base.x + Math.sin(now * 2.1) * 0.06;
+  rival.rotation.y = Math.sin(now * 1.3) * 0.08;
+  if (now >= nextPunchAt && punches.every(p => p.phase === 'back')) {
+    const pool = thrown < 6 ? ['jab', 'cross'] : ['jab', 'cross', 'hookL', 'hookR'];
+    throwPunch(pick(pool));
+    if (thrown > 12 && Math.random() < 0.35) punches[punches.length - 1].double = true;
+    nextPunchAt = Infinity;
+  }
+  glint.visible = false;
+  const busy = { L: false, R: false };
+  for (let i = punches.length - 1; i >= 0; i--) {
+    const p = punches[i], g = rGloves[p.hand];
+    busy[p.hand] = true;
+    if (p.phase === 'wind') {
+      const u = Math.min(1, (now - p.t0) / p.wind);
+      g.position.copy(p.S).add(tmpB.set(0, 0.03 * u, -0.12 * u).applyQuaternion(rival.quaternion));
+      glint.visible = true; glint.position.copy(g.position).add(tmpB.set(0, 0.12, 0));
+      const sc = 0.12 + 0.1 * Math.sin(u * Math.PI); glint.scale.set(sc, sc, 1);
+      if (u >= 1) { p.phase = 'fly'; p.tFly = now; }
+    } else if (p.phase === 'fly') {
+      const u = Math.min(1, (now - p.tFly) / p.dur);
+      punchPos(p, u, g.position);
+      if (u > 0.4) for (const gl of playerGloves()) if (gl.pos.distanceTo(g.position) < 0.2) { resolvePunch(p, 'block', gl); break; }
+      if (p.phase === 'fly' && u >= 1) resolvePunch(p, head.distanceTo(p.E) < 0.2 ? 'hit' : 'dodge');
+    } else {
+      const u = Math.min(1, (now - p.tBack) / 0.3);
+      g.position.copy(p.from).lerp(rWorld(RGUARD[p.hand]), u);
+      if (u >= 1) {
+        punches.splice(i, 1);
+        if (state !== 'fight') continue;
+        if (p.double) { throwPunch(pick(p.hand === 'L' ? ['cross', 'hookR'] : ['jab', 'hookL'])); }
+        else nextPunchAt = now + gapDur();
+      }
+    }
+  }
+  for (const s of ['L', 'R']) {
+    if (!busy[s]) rGloves[s].position.copy(rWorld(RGUARD[s])).add(tmpB.set(0, Math.sin(now * 4 + (s === 'L' ? 0 : 1.5)) * 0.015, 0));
+    setArm(rArms[s], rWorld(RSH[s]), rGloves[s].position);
+  }
+}
+function updateRivalIdle() {
+  for (const s of ['L', 'R']) { rGloves[s].position.copy(rWorld(RGUARD[s])); setArm(rArms[s], rWorld(RSH[s]), rGloves[s].position); }
+}
+function showRival(v) { rival.visible = v; for (const s of ['L', 'R']) { rGloves[s].visible = v; rArms[s].visible = v; } }
+
+// ---------- menu w VR: uderz tarczę, żeby wybrać tryb ----------
+const menuPads = [];
+let menuArmAt = 0;
+function buildMenu() {
+  const geo = new THREE.CylinderGeometry(0.17, 0.17, 0.08, 28); geo.rotateX(Math.PI / 2);
+  for (const [m, label, col, x] of [['combo', 'COMBOS', 0xffd23f, -0.3], ['defense', "DON'T GET HIT", 0x7dff8a, 0.3]]) {
+    const g = new THREE.Group();
+    g.add(toon(geo, col, { outline: 0.018 }));
+    const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex(label, '#fff'), transparent: true, depthTest: false, fog: false }));
+    lab.scale.set(0.56, 0.28, 1); lab.position.set(0, 0.3, 0); lab.renderOrder = 12; g.add(lab);
+    g.userData = { mode: m, x }; g.visible = false; scene.add(g); menuPads.push(g);
+  }
+}
+function updateMenu(dt) {
+  const show = renderer.xr.isPresenting && (state === 'menu' || state === 'end');
+  for (const g of menuPads) {
+    g.visible = show;
+    if (!show) continue;
+    const k = Math.min(1, dt * 3);
+    g.position.x += (head.x + g.userData.x - g.position.x) * k;
+    g.position.y += (head.y - 0.12 - g.position.y) * k;
+    g.position.z += (head.z - 0.55 - g.position.z) * k;
+    g.scale.setScalar(nowS() < menuArmAt ? 0.6 : 1);
+  }
+  if (!show || nowS() < menuArmAt) return;
+  for (const h of hands) {
+    if (!h.has || h.vel.length() < 1.2) continue;
+    for (const g of menuPads) if (g.position.distanceTo(h.pos) < 0.22) {
+      popBurst(g.position.clone(), 1.2); sfxHit(h.vel.length()); buzz(h, 0.8, 60);
+      startCountdown(g.userData.mode); return;
+    }
+  }
+}
+
 // ---------- kontrolery w VR ----------
 const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
 const hands = [];
@@ -744,10 +997,10 @@ for (let i = 0; i < 2; i++) {
   grip.addEventListener('connected', e => {
     h.side = e.data.handedness === 'left' ? 'L' : 'R'; h.src = e.data; h.has = true; h.fresh = true;
     if (h.glove) grip.remove(h.glove);
-    h.glove = makeGlove(COL[h.side]); grip.add(h.glove);
+    h.glove = makeGlove(h.side); grip.add(h.glove);
   });
   grip.addEventListener('disconnected', () => { h.has = false; if (h.glove) { grip.remove(h.glove); h.glove = null; } });
-  ctrl.addEventListener('selectstart', () => { if (state === 'menu' || state === 'end') startCountdown(); });
+  ctrl.addEventListener('selectstart', () => { if ((state === 'menu' || state === 'end') && nowS() >= menuArmAt) startCountdown(lastMode); });
   hands.push(h);
 }
 function updateHands(dt) {
@@ -761,8 +1014,9 @@ function updateHands(dt) {
     h.vel.lerp(tmpB, 0.6); h.prev.copy(tmpA); h.pos.copy(tmpA);
     if (state !== 'fight') continue;
     for (const a of active) {
-      if (a.state !== 'fly' || a.e.kind !== 'pad') continue;
-      if (a.obj.position.distanceTo(h.pos) < 0.2 && h.vel.length() > 1.2) hitPad(a, h.side, h.vel.clone(), h);
+      // tylko właściwa ręka zbija tarczę; druga rękawica przelatuje bez skutku
+      if (a.state !== 'fly' || a.e.kind !== 'pad' || a.e.hand !== h.side) continue;
+      if (a.obj.position.distanceTo(h.pos) < 0.22 && h.vel.length() > 1.2) hitPad(a, h.side, h.vel.clone(), h);
     }
   }
 }
@@ -781,7 +1035,7 @@ renderer.xr.addEventListener('sessionend', () => {
 });
 
 // ---------- tryb komputerowy ----------
-const deskGloves = [makeGlove(COL.L), makeGlove(COL.R)];
+const deskGloves = [makeGlove('L'), makeGlove('R')];
 const GLOVE_REST = [new THREE.Vector3(-0.26, -0.3, -0.62), new THREE.Vector3(0.26, -0.3, -0.62)];
 deskGloves.forEach((g, i) => { g.position.copy(GLOVE_REST[i]); g.rotation.set(0.9, i ? -0.25 : 0.25, 0); g.userData.p = 0; camera.add(g); });
 const keys = new Set();
@@ -794,18 +1048,23 @@ function deskPunch(side) {
   deskGloves[side === 'L' ? 0 : 1].userData.p = 1;
   if (state !== 'fight') return;
   const inReach = active.filter(a => a.state === 'fly' && a.e.kind === 'pad' && a.z > a.zHit - 1.2);
-  if (!inReach.length) return;
   const own = inReach.filter(a => a.e.hand === side);
-  const a = (own.length ? own : inReach).reduce((m, x) => (x.z > m.z ? x : m));
+  if (!own.length) return;
+  const a = own.reduce((m, x) => (x.z > m.z ? x : m));
   hitPad(a, side, PUNCH_DIR[a.e.key].clone().multiplyScalar(5), null);
 }
-renderer.domElement.addEventListener('pointerdown', e => { e.preventDefault(); deskPunch(e.button === 2 ? 'R' : 'L'); });
+const deskGuard = { L: false, R: false };
+function deskDown(side) { if (mode === 'defense' && state === 'fight') deskGuard[side] = true; else deskPunch(side); }
+renderer.domElement.addEventListener('pointerdown', e => { e.preventDefault(); deskDown(e.button === 2 ? 'R' : 'L'); });
+addEventListener('pointerup', e => { deskGuard[e.button === 2 ? 'R' : 'L'] = false; });
 addEventListener('keydown', e => {
   if (e.repeat) return;
   const k = e.key.toLowerCase();
-  if (k === 'f') deskPunch('L'); else if (k === 'j') deskPunch('R');
+  if (k === 'f') deskDown('L'); else if (k === 'j') deskDown('R');
 });
-document.getElementById('start').addEventListener('click', () => startCountdown());
+addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (k === 'f') deskGuard.L = false; if (k === 'j') deskGuard.R = false; });
+document.getElementById('start').addEventListener('click', () => startCountdown('combo'));
+document.getElementById('startDef').addEventListener('click', () => startCountdown('defense'));
 function updateDesktop(dt) {
   const duck = keys.has('c') || keys.has(' ') ? -0.35 : 0;
   const lean = (keys.has('d') ? 0.3 : 0) - (keys.has('a') ? 0.3 : 0);
@@ -814,12 +1073,13 @@ function updateDesktop(dt) {
   deskGloves.forEach((g, i) => {
     g.userData.p = Math.max(0, g.userData.p - dt * 5);
     const p = Math.sin(g.userData.p * Math.PI);
-    g.position.set(GLOVE_REST[i].x * (1 - p * 0.6), GLOVE_REST[i].y + p * 0.12, GLOVE_REST[i].z - p * 0.35);
+    if (deskGuard[i ? 'R' : 'L']) g.position.set(i ? 0.07 : -0.07, -0.04, -0.24);
+    else g.position.set(GLOVE_REST[i].x * (1 - p * 0.6), GLOVE_REST[i].y + p * 0.12, GLOVE_REST[i].z - p * 0.35);
   });
 }
 
 // ---------- pętla ----------
-buildGym(); buildTrainer(); trainerSay('Witaj w klubie Tsubasa!', true); drawHUD();
+buildGym(); buildTrainer(); buildRival(); showRival(false); buildMenu(); trainerSay('Welcome to Tsubasa Gym!', true); drawHUD();
 const clock = new THREE.Clock();
 function frame(dt, draw = true) {
   const now = nowS();
@@ -827,14 +1087,20 @@ function frame(dt, draw = true) {
   camera.getWorldPosition(head);
   updateHands(dt);
   if (state === 'countdown') updateCountdown();
+  updateMenu(dt);
+  showRival(mode === 'defense' && state !== 'menu');
+  if (mode === 'defense' && (state === 'countdown' || state === 'end')) { if (state === 'countdown') placeRival(); updateRivalIdle(); }
   if (state === 'fight') {
-    scheduleMusic(); updateChart();
+    scheduleMusic();
+    if (mode === 'combo') updateChart(); else updateDefense(dt);
     if (bigText.visible && now - cdStart > 3.6) bigText.visible = false;
     const sec = Math.floor(songTime());
     if (sec !== lastHudSec) { lastHudSec = sec; drawHUD(); }
   }
   updateObjects(dt); updateFx(dt);
-  if (state === 'fight' && (hits + misses + dodgeSeen) !== updateHUDCount) { updateHUDCount = hits + misses + dodgeSeen; drawHUD(); }
+  if (flashT > 0) { flashT -= dt; hitFlash.material.opacity = Math.max(0, flashT / 0.35) * 0.45; if (flashT <= 0) hitFlash.visible = false; }
+  if (state === 'fight' && (hits + misses + dodgeSeen) !== updateHUDCount) { updateHUDCount = hits + misses + dodgeSeen; hudDirty = true; }
+  if (hudDirty) drawHUD();
   for (const b of bags) b.piv.rotation.z = Math.sin(now * 1.3 + b.ph) * 0.03;
   const dp = dust[0].geometry.attributes.position;
   for (let i = 0; i < dp.count; i++) { let y = dp.getY(i) + dt * 0.05; if (y > 3) y = -1; dp.setY(i, y); }
@@ -849,7 +1115,7 @@ renderer.setAnimationLoop(() => {
   if (!manualFrames) frame(dt);
 });
 window.__game = { get state() { return state; }, get score() { return score; }, get combo() { return combo; }, get active() { return active.length; }, list: active, camera, startCountdown, frame,
-  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen }) };
+  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken }), punches, menuPads, rGloves };
 </script>
 </body>
 </html>
