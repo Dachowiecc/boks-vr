@@ -409,25 +409,58 @@ function trainerSay(text, force = false) {
 }
 
 // ---------- rękawice ----------
-const CUFF = { L: 0x8f1d10, R: 0x163f95 };
-function letterTex(ch, color) {
-  return canvasTex(128, 128, (g) => {
-    g.fillStyle = '#fff'; g.beginPath(); g.arc(64, 64, 58, 0, Math.PI * 2); g.fill();
-    g.lineWidth = 8; g.strokeStyle = '#111'; g.stroke();
-    g.fillStyle = color; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `400 100px ${BANG}`; g.fillText(ch, 64, 70);
-  }, 'letter' + ch);
+const PIPING = { L: 0xe8412c, R: 0x2d7ff9 };
+// Nadruk kości dłoni, jak aerograf na czarnej skórze. Rysunek prawej dłoni, lewa to lustro.
+// Płótno odwzorowane z góry na grzbiet rękawicy: środek płótna to środek grzbietu,
+// góra płótna to knykcie (przód pięści), dół to nadgarstek, lewa strona płótna to strona kciuka prawej dłoni.
+function boneTex(side) {
+  return canvasTex(512, 512, (g) => {
+    if (side === 'L') { g.translate(512, 0); g.scale(-1, 1); }
+    g.lineCap = 'round'; g.strokeStyle = '#f2f2ee'; g.fillStyle = '#f2f2ee';
+    g.shadowColor = 'rgba(255,255,255,.55)'; g.shadowBlur = 14;
+    const bone = (x1, y1, x2, y2, w) => {
+      g.lineWidth = w; g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+      for (const [x, y] of [[x1, y1], [x2, y2]]) { g.beginPath(); g.arc(x, y, w * 0.62, 0, Math.PI * 2); g.fill(); }
+    };
+    // nadgarstek: kości nadgarstka jako skupisko guzków
+    for (const [x, y, r] of [[200, 430, 20], [245, 440, 19], [290, 436, 19], [330, 425, 17], [220, 395, 17], [265, 400, 18], [310, 392, 17]]) {
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    }
+    // cztery kości śródręcza i paliczki, od palca wskazującego (strona kciuka) do małego
+    const fingers = [[215, 360, 175, 205], [262, 362, 250, 195], [306, 360, 322, 205], [345, 352, 388, 230]];
+    fingers.forEach(([x1, y1, x2, y2], i) => {
+      bone(x1, y1, x2, y2, 24 - i * 2);
+      const dx = (x2 - x1) / (y1 - y2), len = [72, 78, 72, 60][i];
+      const x3 = x2 + dx * len, y3 = y2 - len;
+      bone(x2, y2 - 14, x3, y3, 20 - i * 1.5);
+      bone(x3 + dx * 12, y3 - 14, x3 + dx * (12 + len * 0.62), y3 - 14 - len * 0.62, 17 - i * 1.5);
+    });
+    // kciuk po stronie środka ciała
+    bone(190, 392, 118, 318, 22);
+    bone(108, 304, 62, 244, 19);
+    bone(55, 232, 30, 186, 16);
+  }, 'bones' + side);
 }
-// lewa: czerwona z L, prawa: niebieska z R; kciuk po stronie środka ciała
+// czarna rękawica z nadrukiem szkieletu; kciuk po stronie środka ciała
 function makeGlove(side) {
-  const color = COL[side], sx = side === 'L' ? -1 : 1;
+  const sx = side === 'L' ? -1 : 1;
   const g = new THREE.Group();
-  const fist = toon(new THREE.SphereGeometry(0.075, 20, 14), color, { outline: 0.009 }); fist.scale.set(1, 0.95, 1.25); put(fist, 0, 0, -0.02, g);
-  const thumb = toon(new THREE.SphereGeometry(0.03, 10, 8), color, { outline: 0.005 }); put(thumb, -sx * 0.06, 0.015, -0.05, g);
+  const fist = toon(new THREE.SphereGeometry(0.075, 24, 16), 0x1c1c20, { outline: 0.009 }); fist.scale.set(1, 0.95, 1.25); put(fist, 0, 0, -0.02, g);
+  // nadruk: czasza na grzbiecie z UV rzutowanym z góry, żeby rysunek się nie rozciągał
+  const r = 0.0765, cap = new THREE.SphereGeometry(r, 40, 24, 0, Math.PI * 2, 0, Math.PI * 0.62);
+  const pos = cap.attributes.position, uv = cap.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) / r + 1) / 2, 1 - (pos.getZ(i) / r + 1) / 2);
+  uv.needsUpdate = true;
+  const print = new THREE.Mesh(cap, new THREE.MeshBasicMaterial({ map: boneTex(side), transparent: true, depthWrite: false, fog: false }));
+  print.renderOrder = 2; fist.add(print);
+  const thumb = toon(new THREE.SphereGeometry(0.03, 10, 8), 0x1c1c20, { outline: 0.005 }); put(thumb, -sx * 0.06, 0.015, -0.05, g);
   const cuffGeo = new THREE.CylinderGeometry(0.05, 0.056, 0.09, 16); cuffGeo.rotateX(Math.PI / 2);
-  put(toon(cuffGeo, CUFF[side], { outline: 0.006 }), 0, 0, 0.08, g);
-  const lm = new THREE.MeshBasicMaterial({ map: letterTex(side, side === 'L' ? '#e8412c' : '#2d7ff9'), alphaTest: 0.5, fog: false });
-  const top = new THREE.Mesh(new THREE.PlaneGeometry(0.085, 0.085), lm); top.rotation.x = -Math.PI / 2; put(top, 0, 0.073, -0.02, g);
-  const out = new THREE.Mesh(new THREE.PlaneGeometry(0.075, 0.075), lm); out.rotation.y = sx * Math.PI / 2; put(out, sx * 0.077, 0, -0.02, g);
+  put(toon(cuffGeo, 0x141417, { outline: 0.006 }), 0, 0, 0.08, g);
+  // biały szew przy pięści i wąski pasek koloru ręki na końcu mankietu (łączy rękawicę z kolorem tarcz)
+  const stitch = new THREE.Mesh(new THREE.TorusGeometry(0.0535, 0.0022, 6, 32), new THREE.MeshBasicMaterial({ color: 0xe8e8e2, fog: false }));
+  put(stitch, 0, 0, 0.045, g);
+  const pipe = new THREE.Mesh(new THREE.TorusGeometry(0.0565, 0.005, 6, 32), toonMat(PIPING[side]));
+  put(pipe, 0, 0, 0.123, g);
   return g;
 }
 
@@ -990,6 +1023,12 @@ function updateMenu(dt) {
 // ---------- kontrolery w VR ----------
 const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
 const hands = [];
+// Uchwyt WebXR: -Z przez pięść w stronę kciuka, +X grzbiet prawej dłoni (-X lewej), +Y wzdłuż przedramienia.
+// Model rękawicy: knykcie -Z, grzbiet +Y, mankiet +Z, kciuk po stronie środka ciała. Obrót przekłada jedno na drugie.
+const GRIP_FIX = {
+  R: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0))),
+  L: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, -1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 1, 0))),
+};
 for (let i = 0; i < 2; i++) {
   const grip = renderer.xr.getControllerGrip(i), ctrl = renderer.xr.getController(i);
   scene.add(grip); scene.add(ctrl);
@@ -997,7 +1036,7 @@ for (let i = 0; i < 2; i++) {
   grip.addEventListener('connected', e => {
     h.side = e.data.handedness === 'left' ? 'L' : 'R'; h.src = e.data; h.has = true; h.fresh = true;
     if (h.glove) grip.remove(h.glove);
-    h.glove = makeGlove(h.side); grip.add(h.glove);
+    h.glove = makeGlove(h.side); h.glove.quaternion.copy(GRIP_FIX[h.side]); grip.add(h.glove);
   });
   grip.addEventListener('disconnected', () => { h.has = false; if (h.glove) { grip.remove(h.glove); h.glove = null; } });
   ctrl.addEventListener('selectstart', () => { if ((state === 'menu' || state === 'end') && nowS() >= menuArmAt) startCountdown(lastMode); });
@@ -1115,7 +1154,7 @@ renderer.setAnimationLoop(() => {
   if (!manualFrames) frame(dt);
 });
 window.__game = { get state() { return state; }, get score() { return score; }, get combo() { return combo; }, get active() { return active.length; }, list: active, camera, startCountdown, frame,
-  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken }), punches, menuPads, rGloves };
+  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken }), punches, menuPads, rGloves, makeGlove, scene };
 </script>
 </body>
 </html>
