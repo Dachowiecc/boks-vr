@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ring Tsubasa VR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=Noto+Sans+JP:wght@900&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#1b1714; --fg:#fff4dc; --accent:#ffd23f; --red:#e8412c; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family:system-ui, "Segoe UI", Roboto, sans-serif; overflow:hidden; }
+  #info { position:fixed; left:16px; top:16px; max-width:min(420px, calc(100vw - 64px)); background:rgba(20,16,14,.82); border:2px solid var(--accent); padding:14px 16px; border-radius:10px; font-size:14px; line-height:1.5; z-index:5; }
+  #info h1 { margin:0 0 6px; font-family:Bangers, Impact, sans-serif; font-weight:400; letter-spacing:1px; font-size:34px; color:var(--accent); }
+  #info b { color:var(--accent); }
+  #start { margin-top:10px; background:var(--red); color:#fff; border:2px solid #111; border-radius:8px; padding:10px 18px; font:400 22px Bangers, Impact, sans-serif; letter-spacing:1px; cursor:pointer; }
+  #err { color:#ff8a80; white-space:pre-wrap; font-size:12px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="info">
+  <h1>Ring Tsubasa</h1>
+  <div><b>Gogle:</b> kliknij ENTER VR na dole, potem naciśnij spust.</div>
+  <div><b>Kolory:</b> czerwona tarcza to lewa ręka, niebieska to prawa.</div>
+  <div><b>Strzałka</b> na tarczy pokazuje kierunek ciosu: kropka prosty, bok sierpowy, góra podbródkowy.</div>
+  <div><b>Pomarańczowa belka:</b> schyl się. <b>Żółta ściana:</b> unik głową w stronę strzałki.</div>
+  <div><b>Komputer:</b> lewy / prawy przycisk myszy albo F / J to lewa / prawa ręka, bez celowania. C schyl się, A / D unik.</div>
+  <button id="start">START NA KOMPUTERZE</button>
+  <div id="err"></div>
+</div>
+<script>
+  window.addEventListener('error', e => { const el = document.getElementById('err'); if (el) el.textContent += 'Błąd: ' + e.message + '\n'; });
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+
+// ---------- stałe gry ----------
+const BPM = 120, BEAT = 60 / BPM, ROUND_BARS = 40, SPEED = 6, LEAD = 1.8;
+const DEMPSEY_BARS = [20, 21, 34, 35];
+const COL = { L: 0xe8412c, R: 0x2d7ff9 };
+const BANG = 'Bangers, "Noto Sans JP", Impact, sans-serif';
+const JP = '"Noto Sans JP", "Yu Gothic", sans-serif';
+const SANS = 'system-ui, "Segoe UI", Roboto, sans-serif';
+
+// położenie tarczy względem głowy: [x, y, z]
+const PAD_OFF = {
+  jabL: [-0.17, -0.12, -0.55], jabR: [0.17, -0.12, -0.55],
+  hookL: [-0.40, -0.10, -0.42], hookR: [0.40, -0.10, -0.42],
+  upperL: [-0.15, -0.42, -0.45], upperR: [0.15, -0.42, -0.45],
+};
+const PUNCH_DIR = {
+  jabL: new THREE.Vector3(0, 0, -1), jabR: new THREE.Vector3(0, 0, -1),
+  hookL: new THREE.Vector3(1, 0, -0.3).normalize(), hookR: new THREE.Vector3(-1, 0, -0.3).normalize(),
+  upperL: new THREE.Vector3(0, 1, -0.2).normalize(), upperR: new THREE.Vector3(0, 1, -0.2).normalize(),
+};
+
+// ---------- krój pisma przed płótnami ----------
+try {
+  await Promise.race([
+    Promise.all([
+      document.fonts.load('64px Bangers', 'BAM ĄĘŁ'),
+      document.fonts.load('900 64px "Noto Sans JP"', '翼ボクシングジム根性闘魂ドンバン'),
+    ]),
+    new Promise(r => setTimeout(r, 2500)),
+  ]);
+} catch (e) { /* zostaje krój zapasowy */ }
+
+// ---------- emulator Questa 2 do testów (tylko z ?emu) ----------
+if (new URLSearchParams(location.search).has('emu')) {
+  const { XRDevice, metaQuest2 } = await import('https://cdn.jsdelivr.net/npm/iwer@2.4.0/+esm');
+  const dev = new XRDevice(metaQuest2);
+  dev.installRuntime({ forceInstall: true });
+  dev.position.set(0, 1.6, 0);
+  window.__xr = dev;
+}
+
+// ---------- renderer i scena ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local-floor');
+renderer.xr.setFoveation(1);
+document.body.appendChild(renderer.domElement);
+document.body.appendChild(VRButton.createButton(renderer));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf3e6c8);
+scene.fog = new THREE.Fog(0xf3e6c8, 16, 32);
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 60);
+const DESK = new THREE.Vector3(0, 1.6, 1.0);
+camera.position.copy(DESK);
+camera.lookAt(0, 1.45, -3);
+scene.add(camera);
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+scene.add(new THREE.HemisphereLight(0xfff6e0, 0x6a5a48, 1.2));
+const sun = new THREE.DirectionalLight(0xfff0d0, 1.6);
+sun.position.set(-6, 5, 2);
+scene.add(sun);
+
+// ---------- cel-shading ----------
+const GRAD = new THREE.DataTexture(new Uint8Array([95, 95, 95, 255, 185, 185, 185, 255, 255, 255, 255, 255]), 3, 1, THREE.RGBAFormat);
+GRAD.minFilter = GRAD.magFilter = THREE.NearestFilter; GRAD.needsUpdate = true;
+const OUTLINE = new THREE.MeshBasicMaterial({ color: 0x15110e, side: THREE.BackSide, fog: false });
+const matCache = new Map();
+function toonMat(color, map = null) {
+  const k = color + '|' + (map ? map.uuid : '');
+  if (!matCache.has(k)) matCache.set(k, new THREE.MeshToonMaterial({ color, map, gradientMap: GRAD }));
+  return matCache.get(k);
+}
+function outlineOf(geo, t) {
+  geo.computeBoundingBox();
+  const s = new THREE.Vector3(); geo.boundingBox.getSize(s);
+  const o = new THREE.Mesh(geo, OUTLINE);
+  o.scale.set(s.x > 1e-3 ? (s.x + 2 * t) / s.x : 1, s.y > 1e-3 ? (s.y + 2 * t) / s.y : 1, s.z > 1e-3 ? (s.z + 2 * t) / s.z : 1);
+  o.raycast = () => {};
+  return o;
+}
+function toon(geo, color, { outline = 0.015, map = null } = {}) {
+  const m = new THREE.Mesh(geo, toonMat(color, map));
+  if (outline) m.add(outlineOf(geo, outline));
+  return m;
+}
+function put(obj, x, y, z, parent = scene) { obj.position.set(x, y, z); parent.add(obj); return obj; }
+
+// ---------- tekstury z płótna ----------
+const texCache = new Map();
+function canvasTex(w, h, draw, key) {
+  if (key && texCache.has(key)) return texCache.get(key);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); draw(g, w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  if (key) texCache.set(key, t);
+  return t;
+}
+function fitFont(g, text, family, weight, size, maxW) {
+  do { g.font = `${weight} ${size}px ${family}`; if (g.measureText(text).width <= maxW) break; size -= 4; } while (size > 12);
+  return size;
+}
+function wordTex(text, fill = '#fff', stroke = '#111') {
+  return canvasTex(512, 256, (g, w, h) => {
+    g.translate(w / 2, h / 2); g.rotate(-0.1);
+    const s = fitFont(g, text, BANG, '400', 170, 440);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
+    g.lineWidth = Math.max(10, s * 0.16); g.strokeStyle = stroke; g.strokeText(text, 0, 6);
+    g.fillStyle = fill; g.fillText(text, 0, 6);
+  }, 'w|' + text + fill);
+}
+const burstTex = canvasTex(256, 256, (g) => {
+  g.translate(128, 128); g.beginPath();
+  const n = 18;
+  for (let i = 0; i < n * 2; i++) {
+    const r = i % 2 ? 62 + Math.random() * 14 : 112 + Math.random() * 12, a = i / (n * 2) * Math.PI * 2;
+    i ? g.lineTo(Math.cos(a) * r, Math.sin(a) * r) : g.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  g.closePath(); g.fillStyle = '#fff6a8'; g.fill(); g.lineWidth = 7; g.strokeStyle = '#111'; g.stroke();
+});
+const speedTex = canvasTex(1024, 1024, (g) => {
+  g.translate(512, 512); g.fillStyle = 'rgba(10,8,6,.85)';
+  for (let i = 0; i < 150; i++) {
+    const a = Math.random() * Math.PI * 2, wd = 0.004 + Math.random() * 0.016, r0 = 330 + Math.random() * 140;
+    g.beginPath(); g.moveTo(Math.cos(a) * r0, Math.sin(a) * r0);
+    g.lineTo(Math.cos(a - wd) * 760, Math.sin(a - wd) * 760); g.lineTo(Math.cos(a + wd) * 760, Math.sin(a + wd) * 760);
+    g.closePath(); g.fill();
+  }
+});
+function symTex(kind) {
+  return canvasTex(256, 256, (g) => {
+    g.strokeStyle = '#fff'; g.lineWidth = 16; g.beginPath(); g.arc(128, 128, 106, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = '#fff';
+    if (kind === 'jab') { g.beginPath(); g.arc(128, 128, 44, 0, Math.PI * 2); g.fill(); return; }
+    const ang = kind === 'hookL' ? 0 : kind === 'hookR' ? Math.PI : -Math.PI / 2;
+    g.translate(128, 128); g.rotate(ang); g.beginPath();
+    g.moveTo(-62, -18); g.lineTo(8, -18); g.lineTo(8, -52); g.lineTo(70, 0); g.lineTo(8, 52); g.lineTo(8, 18); g.lineTo(-62, 18);
+    g.closePath(); g.fill();
+  }, 'sym' + kind);
+}
+function hazard(g, w, h, band) {
+  g.fillStyle = '#ffcf1f'; g.fillRect(0, 0, w, h);
+  g.save(); g.beginPath(); g.rect(0, 0, w, h); g.rect(band, band, w - 2 * band, h - 2 * band); g.clip('evenodd');
+  g.fillStyle = '#111'; for (let x = -h; x < w + h; x += 48) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 24, 0); g.lineTo(x + 24 - h, h); g.lineTo(x - h, h); g.fill(); }
+  g.restore();
+}
+function arrow(g, x, y, ang, s) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s); g.beginPath();
+  g.moveTo(-40, -14); g.lineTo(6, -14); g.lineTo(6, -38); g.lineTo(46, 0); g.lineTo(6, 38); g.lineTo(6, 14); g.lineTo(-40, 14);
+  g.closePath(); g.fill(); g.restore();
+}
+
+// ---------- siłownia ----------
+const bags = [];
+const dust = [];
+function buildGym() {
+  const woodTex = canvasTex(512, 512, (g, w, h) => {
+    const cols = ['#b9824c', '#b07943', '#c08b55', '#a8733f'], pw = 64;
+    for (let i = 0; i < 8; i++) {
+      g.fillStyle = cols[i % 4]; g.fillRect(i * pw, 0, pw, h);
+      g.fillStyle = 'rgba(60,30,10,.55)'; g.fillRect(i * pw, 0, 3, h); g.fillRect(i * pw, (i * 197) % h, pw, 3);
+    }
+  });
+  woodTex.wrapS = woodTex.wrapT = THREE.RepeatWrapping; woodTex.repeat.set(5, 6);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(16, 20), toonMat(0xffffff, woodTex));
+  floor.rotation.x = -Math.PI / 2; put(floor, 0, -1, -2);
+
+  const wallBase = canvasTex(256, 512, (g, w, h) => {
+    g.fillStyle = '#efe0bd'; g.fillRect(0, 0, w, h);
+    g.fillStyle = 'rgba(120,90,50,.10)'; for (let y = 0; y < h * 0.7; y += 5) if (Math.random() < 0.3) g.fillRect(0, y, w, 1);
+    g.fillStyle = '#2f5d50'; g.fillRect(0, h * 0.72, w, h * 0.28);
+    g.fillStyle = '#1d3b33'; g.fillRect(0, h * 0.72 - 8, w, 8);
+  });
+  function wall(len, x, z, ry) {
+    const t = wallBase.clone(); t.needsUpdate = true; t.wrapS = THREE.RepeatWrapping; t.repeat.set(len / 2.5, 1);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(len, 5), new THREE.MeshToonMaterial({ map: t, gradientMap: GRAD }));
+    m.rotation.y = ry; put(m, x, 1.5, z);
+  }
+  wall(16, 0, -12, 0); wall(16, 0, 8, Math.PI); wall(20, -8, -2, Math.PI / 2); wall(20, 8, -2, -Math.PI / 2);
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(16, 20), toonMat(0xd9cba6)); ceil.rotation.x = Math.PI / 2; put(ceil, 0, 4, -2);
+  const tubeMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+  for (const x of [-4, 0, 4]) for (const z of [-9, -4, 1, 5]) put(new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.06, 0.16), tubeMat), x, 3.95, z);
+
+  // okna, promienie światła i kurz
+  const winTex = canvasTex(256, 208, (g, w, h) => {
+    const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, '#8fd3ff'); gr.addColorStop(1, '#eaf8ff');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    g.fillStyle = 'rgba(255,255,255,.95)';
+    for (const [cx, cy, r] of [[60, 60, 22], [85, 52, 28], [112, 62, 20], [180, 120, 18], [202, 112, 24]]) { g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill(); }
+    g.strokeStyle = '#5a3b22'; g.lineWidth = 14; g.strokeRect(7, 7, w - 14, h - 14);
+    g.lineWidth = 8; g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+  });
+  const winMat = new THREE.MeshBasicMaterial({ map: winTex, fog: false });
+  const rayMat = new THREE.MeshBasicMaterial({ color: 0xfff0b8, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+  for (const z of [-9, -5, -1, 3]) {
+    const w = new THREE.Mesh(new THREE.PlaneGeometry(2, 1.6), winMat); w.rotation.y = Math.PI / 2; put(w, -7.97, 1.9, z);
+    const r = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 1.4), rayMat); r.rotation.z = -0.47; put(r, -5.25, 0.4, z);
+  }
+  const dGeo = new THREE.BufferGeometry(), dPos = new Float32Array(300 * 3);
+  for (let i = 0; i < 300; i++) { dPos[i * 3] = -8 + Math.random() * 6; dPos[i * 3 + 1] = -1 + Math.random() * 4; dPos[i * 3 + 2] = -11 + Math.random() * 16; }
+  dGeo.setAttribute('position', new THREE.BufferAttribute(dPos, 3));
+  const pts = new THREE.Points(dGeo, new THREE.PointsMaterial({ color: 0xfff3c4, size: 0.03, transparent: true, opacity: 0.7, depthWrite: false }));
+  scene.add(pts); dust.push(pts);
+
+  // transparent z nazwą klubu i plakaty
+  const banner = canvasTex(1024, 256, (g, w, h) => {
+    g.fillStyle = '#c8262d'; g.fillRect(0, 0, w, h); g.strokeStyle = '#fff4dc'; g.lineWidth = 8; g.strokeRect(14, 14, w - 28, h - 28);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff4dc';
+    fitFont(g, '翼ボクシングジム', JP, '900', 120, 900); g.fillText('翼ボクシングジム', w / 2, 100);
+    g.fillStyle = '#ffd23f'; fitFont(g, 'TSUBASA BOXING GYM', BANG, '400', 64, 900); g.fillText('TSUBASA BOXING GYM', w / 2, 196);
+  });
+  put(new THREE.Mesh(new THREE.PlaneGeometry(7, 1.75), toonMat(0xffffff, banner)), 0, 3.0, -11.97);
+  function poster(chars, bg, fg) {
+    return canvasTex(256, 384, (g, w, h) => {
+      g.fillStyle = bg; g.fillRect(0, 0, w, h); g.strokeStyle = fg; g.lineWidth = 6; g.strokeRect(12, 12, w - 24, h - 24);
+      g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `900 150px ${JP}`;
+      g.fillText(chars[0], w / 2, 110); g.fillText(chars[1], w / 2, 272);
+    });
+  }
+  put(new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.1), toonMat(0xffffff, poster('根性', '#ffd23f', '#111'))), -5.5, 1.5, -11.97);
+  put(new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.1), toonMat(0xffffff, poster('闘魂', '#c8262d', '#fff4dc'))), 5.5, 1.5, -11.97);
+  const gala = canvasTex(256, 384, (g, w, h) => {
+    g.fillStyle = '#f4e9d0'; g.fillRect(0, 0, w, h); g.fillStyle = '#c8262d'; g.fillRect(0, 0, w, 90);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; fitFont(g, 'WIELKA GALA', BANG, '400', 58, 230); g.fillText('WIELKA GALA', w / 2, 48);
+    g.fillStyle = '#111'; g.beginPath(); g.arc(80, 190, 50, 0, Math.PI * 2); g.arc(176, 190, 50, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#c8262d'; fitFont(g, 'VS', BANG, '400', 60, 80); g.fillText('VS', w / 2, 190);
+    g.fillStyle = '#111'; fitFont(g, 'PAS WAGI PIÓRKOWEJ', SANS, 'bold', 22, 230); g.fillText('PAS WAGI PIÓRKOWEJ', w / 2, 290);
+    fitFont(g, 'SOBOTA 19:00', BANG, '400', 44, 230); g.fillText('SOBOTA 19:00', w / 2, 336);
+  });
+  const galaM = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.8), toonMat(0xffffff, gala)); galaM.rotation.y = Math.PI / 2; put(galaM, -7.97, 1.6, -3);
+  const kon = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.8), toonMat(0xffffff, poster('根性', '#2f5d50', '#fff4dc'))); kon.rotation.y = Math.PI / 2; put(kon, -7.97, 1.6, -7);
+
+  // tablica z planem treningu
+  const board = canvasTex(512, 340, (g, w, h) => {
+    g.fillStyle = '#26433a'; g.fillRect(0, 0, w, h); g.fillStyle = 'rgba(255,255,255,.92)'; g.textBaseline = 'top';
+    g.font = `400 46px ${BANG}`; g.fillText('PLAN NA DZIŚ', 26, 18);
+    g.font = `bold 30px ${SANS}`;
+    ['• bieg 10 km', '• skakanka 3 x 3 min', '• worek 6 rund', '• tarcze, 1 runda'].forEach((l, i) => g.fillText(l, 30, 90 + i * 44));
+    g.font = `400 38px ${BANG}`; g.fillStyle = '#ffd23f'; g.fillText('NIE ODPUSZCZAJ!', 26, 280);
+  });
+  const frame = toon(new THREE.BoxGeometry(0.06, 1.75, 2.55), 0x6b4424, { outline: 0.01 }); put(frame, 7.95, 1.7, -3);
+  const bm = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.6), toonMat(0xffffff, board)); bm.rotation.y = -Math.PI / 2; put(bm, 7.91, 1.7, -3);
+
+  // ring
+  const canvasRing = canvasTex(1024, 1024, (g, w, h) => {
+    g.fillStyle = '#d5dde6'; g.fillRect(0, 0, w, h); g.strokeStyle = '#9fb0c4'; g.lineWidth = 10; g.strokeRect(40, 40, w - 80, h - 80);
+    g.fillStyle = '#c3cfdc'; g.beginPath(); g.arc(w / 2, h / 2, 300, 0, Math.PI * 2); g.fill();
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = 'rgba(40,60,110,.28)'; g.font = `900 380px ${JP}`; g.fillText('翼', w / 2, h / 2 + 10);
+    g.fillStyle = 'rgba(40,60,110,.35)'; g.font = `400 90px ${BANG}`; g.fillText('TSUBASA', w / 2, 120); g.fillText('TSUBASA', w / 2, h - 120);
+  });
+  put(toon(new THREE.BoxGeometry(6.6, 1, 6.6), 0x1f3a6e, { outline: 0.02 }), 0, -0.5, 0);
+  const top = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 6.4), toonMat(0xffffff, canvasRing)); top.rotation.x = -Math.PI / 2; put(top, 0, 0.005, 0);
+  const postGeo = new THREE.CylinderGeometry(0.07, 0.07, 1.4, 12), padGeo = new THREE.BoxGeometry(0.2, 1.1, 0.2);
+  for (const [x, z, c] of [[-3.1, -3.1, 0xd7263d], [3.1, 3.1, 0x2b59c3], [3.1, -3.1, 0xf4f1e8], [-3.1, 3.1, 0xf4f1e8]]) {
+    put(toon(postGeo, 0x9aa0a8), x, 0.7, z); put(toon(padGeo, c, { outline: 0.012 }), x, 0.8, z);
+  }
+  const ropeX = new THREE.CylinderGeometry(0.022, 0.022, 6.2, 8); ropeX.rotateZ(Math.PI / 2);
+  const ropeZ = new THREE.CylinderGeometry(0.022, 0.022, 6.2, 8); ropeZ.rotateX(Math.PI / 2);
+  [[0.45, 0xd7263d], [0.85, 0xf4f1e8], [1.25, 0x2b59c3]].forEach(([y, c]) => {
+    put(toon(ropeX, c, { outline: 0.01 }), 0, y, -3.1); put(toon(ropeX, c, { outline: 0.01 }), 0, y, 3.1);
+    put(toon(ropeZ, c, { outline: 0.01 }), -3.1, y, 0); put(toon(ropeZ, c, { outline: 0.01 }), 3.1, y, 0);
+  });
+
+  // worki
+  const bagGeo = new THREE.CylinderGeometry(0.22, 0.22, 1.1, 16), bandGeo = new THREE.CylinderGeometry(0.228, 0.228, 0.1, 16), chainGeo = new THREE.CylinderGeometry(0.012, 0.012, 3.05, 6);
+  for (const [x, z, c] of [[-5.2, -6, 0xb8322a], [-5.2, 0, 0x2a2a2e], [5.3, -6, 0x2a2a2e], [5.3, 1.5, 0xb8322a]]) {
+    const piv = put(new THREE.Group(), x, 4, z);
+    put(toon(chainGeo, 0x777777, { outline: 0 }), 0, -1.525, 0, piv);
+    put(toon(bagGeo, c, { outline: 0.02 }), 0, -3.6, 0, piv);
+    put(toon(bandGeo, 0x111111, { outline: 0 }), 0, -3.2, 0, piv);
+    put(toon(bandGeo, 0x111111, { outline: 0 }), 0, -4.0, 0, piv);
+    bags.push({ piv, ph: Math.random() * 6 });
+  }
+
+  // gruszka, szafki, opony, ławka, drzwi
+  put(toon(new THREE.BoxGeometry(1.2, 0.08, 1.0), 0x6b4424), 5.5, 2.3, -11.4);
+  put(toon(new THREE.BoxGeometry(0.1, 1.2, 0.1), 0x6b4424), 5.5, 2.9, -11.85);
+  const sb = toon(new THREE.SphereGeometry(0.12, 14, 10), 0xb8322a, { outline: 0.01 }); sb.scale.set(1, 1.4, 1); put(sb, 5.5, 2.06, -11.4);
+  const lockerGeo = new THREE.BoxGeometry(0.5, 2, 0.5);
+  for (let z = 1.2; z <= 6.2; z += 0.56) put(toon(lockerGeo, 0x7c93a8, { outline: 0.012 }), 7.7, 0, z);
+  const tire = new THREE.TorusGeometry(0.34, 0.13, 10, 20); tire.rotateX(Math.PI / 2);
+  put(toon(tire, 0x2a2a2e, { outline: 0.015 }), -5.6, -0.87, 5); put(toon(tire, 0x2a2a2e, { outline: 0.015 }), -5.5, -0.61, 5.05);
+  put(toon(new THREE.BoxGeometry(1.6, 0.4, 0.45), 0x6b4424), 5.3, -0.8, 6.8);
+  const dbBar = new THREE.CylinderGeometry(0.02, 0.02, 0.3, 8); dbBar.rotateZ(Math.PI / 2);
+  const dbEnd = new THREE.SphereGeometry(0.06, 10, 8);
+  for (let i = 0; i < 4; i++) {
+    const x = 4.8 + i * 0.33;
+    put(toon(dbBar, 0x666666, { outline: 0 }), x, -0.54, 6.8);
+    put(toon(dbEnd, 0x222222, { outline: 0.01 }), x - 0.13, -0.54, 6.8); put(toon(dbEnd, 0x222222, { outline: 0.01 }), x + 0.13, -0.54, 6.8);
+  }
+  put(toon(new THREE.BoxGeometry(1.3, 2.3, 0.08), 0x7a4a26, { outline: 0.015 }), -4, 0.15, 7.95);
+}
+
+// ---------- trener ----------
+const trainer = new THREE.Group();
+let bubbleSprite, bubbleCtx, bubbleTex, lastSay = -10;
+function buildTrainer() {
+  put(toon(new THREE.CylinderGeometry(0.08, 0.08, 0.8, 10), 0x4a4a52), -0.11, 0.4, 0, trainer);
+  put(toon(new THREE.CylinderGeometry(0.08, 0.08, 0.8, 10), 0x4a4a52), 0.11, 0.4, 0, trainer);
+  put(toon(new THREE.CapsuleGeometry(0.26, 0.5, 4, 12), 0x7a2e24, { outline: 0.02 }), 0, 1.12, 0, trainer);
+  const armGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.62, 10);
+  const a1 = put(toon(armGeo, 0x7a2e24), -0.33, 1.1, 0.05, trainer); a1.rotation.z = -0.15;
+  const a2 = put(toon(armGeo, 0x7a2e24), 0.33, 1.1, 0.05, trainer); a2.rotation.z = 0.15;
+  put(toon(new THREE.SphereGeometry(0.17, 16, 12), 0xf0c8a0, { outline: 0.012 }), 0, 1.72, 0, trainer);
+  put(toon(new THREE.CylinderGeometry(0.18, 0.18, 0.1, 16), 0x1f3a6e), 0, 1.86, 0, trainer);
+  put(toon(new THREE.BoxGeometry(0.24, 0.02, 0.16), 0x1f3a6e, { outline: 0.006 }), 0, 1.82, 0.16, trainer);
+  put(toon(new THREE.BoxGeometry(0.24, 0.05, 0.02), 0x111111, { outline: 0 }), 0, 1.74, 0.165, trainer);
+  put(toon(new THREE.BoxGeometry(0.13, 0.03, 0.02), 0xf4f1e8, { outline: 0.004 }), 0, 1.65, 0.165, trainer);
+  put(toon(new THREE.CylinderGeometry(0.015, 0.015, 0.95, 6), 0x5a3b22, { outline: 0.006 }), 0.42, 0.48, 0.12, trainer);
+  const c = document.createElement('canvas'); c.width = 512; c.height = 256; bubbleCtx = c.getContext('2d');
+  bubbleTex = new THREE.CanvasTexture(c); bubbleTex.colorSpace = THREE.SRGBColorSpace;
+  bubbleSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: bubbleTex, transparent: true, depthWrite: false, fog: false }));
+  bubbleSprite.scale.set(1.4, 0.7, 1); put(bubbleSprite, 0, 2.45, 0, trainer);
+  trainer.position.set(3.7, -1, -3.9); trainer.lookAt(0, -1, 0.5); scene.add(trainer);
+}
+function trainerSay(text, force = false) {
+  const now = nowS();
+  if (!force && now - lastSay < 1.6) return;
+  lastSay = now;
+  const g = bubbleCtx, w = 512, h = 256;
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = '#fff'; g.strokeStyle = '#111'; g.lineWidth = 8;
+  g.beginPath(); g.roundRect(10, 10, w - 20, h - 70, 40); g.moveTo(230, h - 62); g.lineTo(256, h - 12); g.lineTo(290, h - 62); g.fill(); g.stroke();
+  g.fillStyle = '#fff'; g.fillRect(236, h - 70, 50, 14);
+  g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const words = text.split(' '), lines = [''];
+  g.font = `bold 44px ${SANS}`;
+  for (const wd of words) { const t = (lines[lines.length - 1] + ' ' + wd).trim(); if (g.measureText(t).width > w - 70) lines.push(wd); else lines[lines.length - 1] = t; }
+  const cy = (h - 60) / 2, lh = 50;
+  lines.forEach((l, i) => g.fillText(l, w / 2, cy + (i - (lines.length - 1) / 2) * lh));
+  bubbleTex.needsUpdate = true;
+}
+
+// ---------- rękawice ----------
+function makeGlove(color) {
+  const g = new THREE.Group();
+  const fist = toon(new THREE.SphereGeometry(0.075, 20, 14), color, { outline: 0.008 }); fist.scale.set(1, 0.95, 1.25); put(fist, 0, 0, -0.02, g);
+  const thumb = toon(new THREE.SphereGeometry(0.03, 10, 8), color, { outline: 0.005 }); put(thumb, 0, 0.04, -0.07, g);
+  const cuffGeo = new THREE.CylinderGeometry(0.05, 0.056, 0.09, 16); cuffGeo.rotateX(Math.PI / 2);
+  put(toon(cuffGeo, 0xf4f1e8, { outline: 0.006 }), 0, 0, 0.08, g);
+  return g;
+}
+
+// ---------- dźwięk syntetyczny ----------
+let actx = null, master, noiseBuf;
+function initAudio() {
+  if (actx) return;
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  master = actx.createGain(); master.gain.value = 0.7; master.connect(actx.destination);
+  noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+  const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+}
+function env(t, vol, dur) { const g = actx.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur); g.connect(master); return g; }
+function tone(t, type, f0, f1, vol, dur, filt) {
+  const o = actx.createOscillator(); o.type = type; o.frequency.setValueAtTime(f0, t);
+  if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dur * 0.5);
+  const g = env(t, vol, dur);
+  if (filt) { const f = actx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = filt; o.connect(f).connect(g); } else o.connect(g);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+function noise(t, dur, type, freq, vol) {
+  const s = actx.createBufferSource(); s.buffer = noiseBuf;
+  const f = actx.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+  s.connect(f).connect(env(t, vol, dur)); s.start(t); s.stop(t + dur + 0.02);
+}
+const kick = t => tone(t, 'sine', 140, 42, 0.9, 0.3);
+const snare = t => { noise(t, 0.18, 'highpass', 1200, 0.45); tone(t, 'triangle', 190, 0, 0.25, 0.08); };
+const hat = (t, open) => noise(t, open ? 0.1 : 0.04, 'highpass', 7000, 0.11);
+const BASS = [55, 55, 43.65, 49], CHORDS = [[220, 261.6, 329.6], [220, 261.6, 329.6], [174.6, 220, 261.6], [196, 246.9, 293.7]];
+const bass = (t, f) => tone(t, 'sawtooth', f, 0, 0.28, BEAT * 0.45, 500);
+const stab = (t, ch) => ch.forEach(f => tone(t, 'square', f, 0, 0.06, 0.35, 2200));
+function bell(t, n = 1) {
+  for (let k = 0; k < n; k++) {
+    const tt = t + k * 0.35;
+    [1, 2.76, 5.4].forEach((m, j) => tone(tt, 'sine', 620 * m, 0, 0.35 / (j + 1), 1.6));
+  }
+}
+function sfxHit(speed) { const t = actx.currentTime, s = Math.min(1, speed / 5); noise(t, 0.12, 'lowpass', 1800, 0.5 + 0.5 * s); tone(t, 'sine', 110, 50, 0.8 * s + 0.2, 0.18); }
+const sfxWhoosh = () => noise(actx.currentTime, 0.25, 'bandpass', 900, 0.35);
+const sfxOuch = () => { const t = actx.currentTime; tone(t, 'square', 180, 90, 0.25, 0.25, 900); noise(t, 0.15, 'lowpass', 600, 0.6); };
+
+// ---------- układ rundy ----------
+function rng32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const PATTERNS = {
+  j1: [[0, 'L', 'jab'], [1, 'L', 'jab'], [2, 'R', 'jab']],
+  j2: [[0, 'L', 'jab'], [1, 'R', 'jab'], [2, 'L', 'hook']],
+  j3: [[0, 'L', 'jab'], [1, 'R', 'jab'], [2, 'L', 'hook'], [3, 'R', 'jab']],
+  up: [[0, 'L', 'jab'], [1, 'R', 'upper'], [2, 'L', 'hook'], [3, 'R', 'jab']],
+  up2: [[0, 'R', 'upper'], [1, 'L', 'upper'], [2, 'R', 'hook'], [3, 'L', 'hook']],
+  duck: [[0, 'duck'], [2, 'L', 'hook'], [3, 'R', 'hook']],
+  weave: [[0, 'wallL'], [1, 'R', 'hook'], [2, 'wallR'], [3, 'L', 'hook']],
+  fast: [[0, 'L', 'jab'], [0.5, 'L', 'jab'], [1, 'R', 'jab'], [2, 'L', 'hook'], [3, 'R', 'upper']],
+};
+const TIERS = [['j1', 'j2'], ['j2', 'j3', 'duck', 'up'], ['j3', 'up', 'up2', 'duck', 'weave', 'fast']];
+function buildChart() {
+  const r = rng32(Date.now() & 0xffffffff), ev = [];
+  for (let bar = 2; bar < ROUND_BARS; bar++) {
+    let name;
+    if (DEMPSEY_BARS.includes(bar)) name = 'weave';
+    else {
+      if (bar % 8 === 7) continue;
+      const list = TIERS[bar < 10 ? 0 : bar < 22 ? 1 : 2]; name = list[Math.floor(r() * list.length)];
+    }
+    for (const p of PATTERNS[name]) {
+      const t = (bar * 4 + p[0]) * BEAT;
+      ev.push(p.length === 3 ? { kind: 'pad', t, hand: p[1], punch: p[2], key: p[2] + p[1] } : { kind: p[1], t });
+    }
+  }
+  for (const b of DEMPSEY_BARS) if (!DEMPSEY_BARS.includes(b - 1)) ev.push({ kind: 'announce', t: (b * 4 - 2) * BEAT + LEAD });
+  return ev.sort((a, b) => a.t - b.t);
+}
+
+// ---------- tarcze i przeszkody ----------
+const PAD_GEO = new THREE.CylinderGeometry(0.15, 0.15, 0.08, 28); PAD_GEO.rotateX(Math.PI / 2);
+const FACE_GEO = new THREE.PlaneGeometry(0.27, 0.27);
+const faceMats = {};
+for (const k of Object.keys(PAD_OFF)) {
+  const kind = k.startsWith('jab') ? 'jab' : k.startsWith('upper') ? 'upper' : k;
+  faceMats[k] = new THREE.MeshBasicMaterial({ map: symTex(kind), alphaTest: 0.5, fog: false });
+}
+function makePad(e) {
+  const g = new THREE.Group();
+  g.add(toon(PAD_GEO, COL[e.hand], { outline: 0.018 }));
+  put(new THREE.Mesh(FACE_GEO, faceMats[e.key]), 0, 0, 0.042, g);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.015, 8, 28), toonMat(0xf4f1e8)); rim.position.z = 0.03; g.add(rim);
+  return g;
+}
+const duckTex = canvasTex(1024, 96, (g, w, h) => {
+  hazard(g, w, h, 10); g.fillStyle = '#ff7a1a'; g.fillRect(10, 10, w - 20, h - 20);
+  g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `400 64px ${BANG}`;
+  for (const x of [170, 512, 854]) g.fillText('SCHYL SIĘ', x, h / 2 + 3);
+  for (const x of [40, 340, 680, 984]) arrow(g, x, h / 2, Math.PI / 2, 0.8);
+});
+function wallTex(dir) {
+  return canvasTex(512, 360, (g, w, h) => {
+    hazard(g, w, h, 28); g.fillStyle = '#ffe680'; g.fillRect(28, 28, w - 56, h - 56);
+    g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `400 110px ${BANG}`; g.fillText('UNIK', w / 2, 120);
+    arrow(g, w / 2, 250, dir > 0 ? 0 : Math.PI, 1.6);
+  });
+}
+const DUCK_GEO = new THREE.BoxGeometry(2.6, 0.2, 0.2), WALL_GEO = new THREE.BoxGeometry(1.3, 0.9, 0.1);
+const obsMats = { duck: toonMat(0xffffff, duckTex), wallL: toonMat(0xffffff, wallTex(1)), wallR: toonMat(0xffffff, wallTex(-1)) };
+function makeObstacle(kind) {
+  const geo = kind === 'duck' ? DUCK_GEO : WALL_GEO;
+  const m = new THREE.Mesh(geo, obsMats[kind]); m.add(outlineOf(geo, 0.02));
+  return m;
+}
+
+// ---------- efekty ----------
+const fx = [];
+function popWord(text, pos, fill = '#fff', size = 1, life = 0.7) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex(text, fill), transparent: true, depthTest: false, depthWrite: false, fog: false }));
+  s.renderOrder = 10; s.position.copy(pos);
+  scene.add(s);
+  fx.push({ obj: s, t: 0, life, size, kind: 'word', drift: new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.6, -0.5) });
+}
+function popBurst(pos, size) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: burstTex, transparent: true, depthWrite: false, fog: false }));
+  s.renderOrder = 9; s.position.copy(pos); s.material.rotation = Math.random() * 6;
+  scene.add(s);
+  fx.push({ obj: s, t: 0, life: 0.25, size, kind: 'burst' });
+}
+const speedLines = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 2.2), new THREE.MeshBasicMaterial({ map: speedTex, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false }));
+speedLines.renderOrder = 20; speedLines.position.set(0, 0, -0.7); speedLines.visible = false; camera.add(speedLines);
+let speedT = 0;
+function flashSpeedLines() { speedT = 0.28; speedLines.visible = true; speedLines.rotation.z = Math.random() * 6; }
+function updateFx(dt) {
+  for (let i = fx.length - 1; i >= 0; i--) {
+    const f = fx[i]; f.t += dt; const k = f.t / f.life;
+    if (k >= 1) { scene.remove(f.obj); f.obj.material.dispose(); fx.splice(i, 1); continue; }
+    if (f.kind === 'word') {
+      const pop = k < 0.15 ? k / 0.15 * 1.25 : 1.25 - Math.min(0.25, (k - 0.15));
+      f.obj.scale.set(0.4 * f.size * pop, 0.2 * f.size * pop, 1);
+      f.obj.position.addScaledVector(f.drift, dt); f.obj.material.opacity = k < 0.6 ? 1 : 1 - (k - 0.6) / 0.4;
+    } else {
+      const sc = (0.25 + k * 0.6) * f.size; f.obj.scale.set(sc, sc, 1); f.obj.material.opacity = 1 - k;
+    }
+  }
+  if (speedT > 0) { speedT -= dt; speedLines.material.opacity = Math.max(0, speedT / 0.28) * 0.9; if (speedT <= 0) speedLines.visible = false; }
+}
+
+// ---------- tablica wyników ----------
+const hudC = document.createElement('canvas'); hudC.width = 1024; hudC.height = 320;
+const hudG = hudC.getContext('2d'), hudTex = new THREE.CanvasTexture(hudC); hudTex.colorSpace = THREE.SRGBColorSpace;
+const hud = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.69), new THREE.MeshBasicMaterial({ map: hudTex, transparent: true, fog: false }));
+hud.position.set(0, 2.6, -3.6); scene.add(hud);
+const bigText = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex('3'), transparent: true, depthTest: false, fog: false }));
+bigText.renderOrder = 15; bigText.visible = false; scene.add(bigText);
+
+let best = 0;
+try { best = +localStorage.getItem('tsubasa-best') || 0; } catch (e) { /* bez zapisu */ }
+function drawHUD() {
+  const g = hudG, w = 1024, h = 320;
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = 'rgba(20,16,14,.88)'; g.strokeStyle = '#ffd23f'; g.lineWidth = 8;
+  g.beginPath(); g.roundRect(6, 6, w - 12, h - 12, 28); g.fill(); g.stroke();
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  if (state === 'menu') {
+    g.fillStyle = '#ffd23f'; g.font = `400 120px ${BANG}`; g.fillText('RING TSUBASA', w / 2, 120);
+    g.fillStyle = '#fff4dc'; g.font = `bold 44px ${SANS}`; g.fillText(renderer.xr.isPresenting ? 'Naciśnij spust, żeby zacząć' : 'Kliknij START NA KOMPUTERZE', w / 2, 236);
+  } else if (state === 'end') {
+    g.fillStyle = '#ffd23f'; g.font = `400 88px ${BANG}`; g.fillText('KONIEC RUNDY', w / 2, 70);
+    g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`;
+    const acc = padsSeen ? Math.round(hits / padsSeen * 100) : 0;
+    g.fillText(`Punkty ${score} · Combo ${maxCombo} · Celność ${acc}%`, w / 2, 160);
+    g.fillText(`Uniki ${dodgeOk}/${dodgeSeen} · Rekord ${best}`, w / 2, 212);
+    g.fillStyle = '#ffd23f'; g.fillText(renderer.xr.isPresenting ? 'Spust: jeszcze raz' : 'Kliknij START: jeszcze raz', w / 2, 272);
+  } else {
+    const left = Math.max(0, Math.ceil(ROUND_BARS * 4 * BEAT - (state === 'fight' ? songTime() : 0)));
+    g.fillStyle = '#fff4dc'; g.font = `bold 34px ${SANS}`;
+    g.fillText('PUNKTY', 180, 70); g.fillText('COMBO', w / 2, 70); g.fillText('CZAS', w - 180, 70);
+    g.fillStyle = '#ffd23f'; g.font = `400 110px ${BANG}`;
+    g.fillText(String(score), 180, 170); g.fillText('x' + combo, w / 2, 170);
+    g.fillText(`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`, w - 180, 170);
+    g.fillStyle = '#fff4dc'; g.font = `bold 32px ${SANS}`; g.fillText(`mnożnik x${mult()}`, w / 2, 250);
+    const p = state === 'fight' ? Math.min(1, songTime() / (ROUND_BARS * 4 * BEAT)) : 0;
+    g.fillStyle = '#3a312a'; g.fillRect(60, 280, w - 120, 14); g.fillStyle = '#e8412c'; g.fillRect(60, 280, (w - 120) * p, 14);
+  }
+  hudTex.needsUpdate = true;
+}
+
+// ---------- stan gry ----------
+let state = 'menu', score = 0, combo = 0, maxCombo = 0, hits = 0, misses = 0, padsSeen = 0, dodgeOk = 0, dodgeSeen = 0;
+let chart = [], chartIdx = 0, startTime = 0, nextBeat = 0, cdStart = 0, lastHudSec = -1;
+const base = new THREE.Vector3(), head = new THREE.Vector3(), active = [];
+let vnow = null; // zegar wirtualny dla testów, w grze zawsze null
+const nowS = () => vnow ?? performance.now() / 1000;
+const aNow = () => vnow ?? actx.currentTime;
+const songTime = () => aNow() - startTime;
+const mult = () => 1 + Math.min(3, Math.floor(combo / 10));
+
+function startCountdown() {
+  initAudio(); actx.resume();
+  document.getElementById('info').style.display = 'none';
+  for (const a of active) scene.remove(a.obj); active.length = 0;
+  score = combo = maxCombo = hits = misses = padsSeen = dodgeOk = dodgeSeen = 0;
+  state = 'countdown'; cdStart = nowS();
+  trainerSay('Pokaż mi swoje pięści!', true); drawHUD();
+}
+function updateCountdown() {
+  const e = nowS() - cdStart, n = 3 - Math.floor(e);
+  bigText.visible = true;
+  bigText.position.set(head.x, head.y - 0.1, head.z - 2.2);
+  bigText.material.map = wordTex(n > 0 ? String(n) : 'WALKA!', n > 0 ? '#fff' : '#ffd23f');
+  const s = n > 0 ? 0.7 + (e % 1) * 0.3 : 1.2; bigText.scale.set(1.2 * s, 0.6 * s, 1);
+  if (e >= 3) {
+    base.copy(head); chart = buildChart(); chartIdx = 0; nextBeat = 0;
+    startTime = aNow() + 0.05; bell(actx.currentTime, 1);
+    state = 'fight';
+  }
+}
+function endRound() {
+  state = 'end'; bell(actx.currentTime, 3);
+  if (!renderer.xr.isPresenting) document.getElementById('info').style.display = '';
+  if (score > best) { best = score; try { localStorage.setItem('tsubasa-best', String(best)); } catch (e) { /* bez zapisu */ } }
+  trainerSay(score >= best ? 'Nowy rekord! Świetna robota, młody!' : 'Dobra runda. Jutro znowu!', true);
+  drawHUD();
+}
+function scheduleMusic() {
+  const ahead = aNow() + 0.25, lastIdx = (ROUND_BARS + 1) * 8;
+  while (nextBeat < lastIdx) {
+    const t = startTime + nextBeat * BEAT / 2;
+    if (t > ahead) break;
+    const bar = Math.floor(nextBeat / 8), pos = nextBeat % 8;
+    if (bar < ROUND_BARS && vnow === null) {
+      if (pos % 2 === 0) kick(t);
+      if (bar >= 2 && (pos === 2 || pos === 6)) snare(t);
+      hat(t, pos % 2 === 1);
+      if (bar >= 2 && pos % 2 === 1) bass(t, BASS[bar % 4]);
+      if (bar >= 2 && pos === 0) stab(t, CHORDS[bar % 4]);
+    }
+    nextBeat++;
+  }
+}
+function spawn(e) {
+  if (e.kind === 'announce') {
+    popWord('DEMPSEY ROLL!', new THREE.Vector3(base.x, base.y + 0.3, base.z - 2.2), '#ffd23f', 2.2, 1.4);
+    trainerSay('Teraz! Dempsey Roll! Głowa w ruchu!', true); flashSpeedLines();
+    return;
+  }
+  const a = { e, state: 'fly', z: 0 };
+  if (e.kind === 'pad') {
+    const off = PAD_OFF[e.key];
+    a.obj = makePad(e); a.x = base.x + off[0]; a.y = base.y + off[1]; a.zHit = base.z + off[2];
+    padsSeen++;
+  } else {
+    a.obj = makeObstacle(e.kind); a.zHit = base.z;
+    a.x = e.kind === 'duck' ? base.x : e.kind === 'wallL' ? base.x - 0.67 : base.x + 0.67;
+    a.y = e.kind === 'duck' ? base.y - 0.02 : base.y - 0.05;
+  }
+  a.obj.traverse(o => { o.userData.ref = a; });
+  scene.add(a.obj); active.push(a);
+}
+function removeActive(i) { scene.remove(active[i].obj); active.splice(i, 1); }
+function hitPad(a, side, vel, h) {
+  const e = a.e, correct = side === e.hand, speed = vel.length();
+  const dirOK = tmpA.copy(vel).normalize().dot(PUNCH_DIR[e.key]) > 0.35;
+  const perfect = correct && dirOK && Math.abs(a.z - a.zHit) < 0.3;
+  if (correct) { combo++; maxCombo = Math.max(maxCombo, combo); }
+  hits++;
+  score += Math.round(100 * (correct ? 1 : 0.5) * (dirOK ? 1 : 0.6) * (perfect ? 1.5 : 1) * mult());
+  a.state = 'knock'; a.life = 0.9; a.spin = 8 + Math.random() * 8;
+  a.vel = vel.clone().multiplyScalar(0.5).add(new THREE.Vector3(0, 1.6, 0)).clampLength(0, 8);
+  const pos = a.obj.position.clone();
+  popBurst(pos, speed > 4 ? 1.4 : 1);
+  const word = speed > 4.2 ? pick(['DOOM!', 'ドン!']) : speed > 2.6 ? pick(['BAM!', 'POW!', 'バン!']) : 'PAK!';
+  popWord(word, pos.clone().add(new THREE.Vector3(side === 'L' ? -0.15 : 0.15, 0.18, 0)), speed > 4.2 ? '#ffd23f' : '#fff', speed > 4.2 ? 1.5 : 1);
+  if (perfect) popWord('IDEALNIE!', pos.clone().add(new THREE.Vector3(0, -0.2, 0)), '#7dff8a', 0.7, 0.55);
+  if (!correct) popWord('ZŁA RĘKA', pos.clone().add(new THREE.Vector3(0, -0.2, 0)), '#bbbbbb', 0.6, 0.55);
+  if ((perfect && speed > 3.5) || (combo > 0 && combo % 10 === 0 && correct)) flashSpeedLines();
+  if (correct && combo > 0 && combo % 10 === 0) {
+    popWord(`COMBO ${combo}!`, new THREE.Vector3(base.x, base.y + 0.35, base.z - 1.8), '#ffd23f', 1.6, 1);
+    trainerSay(pick(['Dobrze! Tak trzymaj!', 'Właśnie tak, młody!', 'Czuję ten cios stąd!']), true);
+  }
+  sfxHit(speed);
+  if (h) buzz(h, Math.min(1, 0.3 + speed / 6), 60);
+}
+function missPad(a) {
+  combo = 0; misses++;
+  popWord('PUDŁO', new THREE.Vector3(base.x + (a.x - base.x) * 2, a.y, base.z - 1.2), '#bbbbbb', 0.8, 0.5);
+  if (misses % 3 === 0) trainerSay(pick(['Ręce wyżej!', 'Nie śpij!', 'Patrz na tarczę!']));
+}
+function checkDodge(a) {
+  dodgeSeen++;
+  const k = a.e.kind;
+  const ok = k === 'duck' ? head.y < base.y - 0.2 : k === 'wallL' ? head.x > base.x + 0.12 : head.x < base.x - 0.12;
+  const at = new THREE.Vector3(base.x, base.y + 0.15, base.z - 0.8);
+  if (ok) { dodgeOk++; score += 50 * mult(); popWord('UNIK!', at, '#7dff8a', 1); sfxWhoosh(); }
+  else {
+    combo = 0; popWord('AUĆ!', at, '#ff5a4a', 1.4); sfxOuch();
+    for (const h of hands) if (h.has) buzz(h, 1, 120);
+    trainerSay(k === 'duck' ? 'Schyl się niżej!' : 'Głowa w ruchu!');
+  }
+}
+function updateChart() {
+  const st = songTime();
+  while (chartIdx < chart.length && chart[chartIdx].t - st < LEAD) spawn(chart[chartIdx++]);
+  if (chartIdx >= chart.length && active.length === 0 && st > ROUND_BARS * 4 * BEAT) endRound();
+}
+function updateObjects(dt) {
+  const st = state === 'fight' ? songTime() : 0;
+  for (let i = active.length - 1; i >= 0; i--) {
+    const a = active[i];
+    if (a.state === 'fly') {
+      if (state !== 'fight') { removeActive(i); continue; }
+      a.z = a.zHit - (a.e.t - st) * SPEED;
+      a.obj.position.set(a.x, a.y, a.z);
+      a.obj.scale.setScalar(Math.min(1, (LEAD - (a.e.t - st)) / 0.25));
+      if (a.e.kind === 'pad') {
+        a.obj.rotation.z = Math.sin(st * 6 + i) * 0.12;
+        if (a.z > a.zHit + 0.4) { missPad(a); removeActive(i); }
+      } else if (a.z >= a.zHit - 0.25) { checkDodge(a); removeActive(i); }
+    } else {
+      a.vel.y -= 9.8 * dt; a.obj.position.addScaledVector(a.vel, dt);
+      a.obj.rotation.x += a.spin * dt; a.obj.rotation.y += a.spin * 0.5 * dt;
+      a.life -= dt; if (a.life <= 0) removeActive(i);
+    }
+  }
+}
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+function buzz(h, amp, ms) { try { h.src?.gamepad?.hapticActuators?.[0]?.pulse(amp, ms); } catch (e) { /* brak wibracji */ } }
+
+// ---------- kontrolery w VR ----------
+const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
+const hands = [];
+for (let i = 0; i < 2; i++) {
+  const grip = renderer.xr.getControllerGrip(i), ctrl = renderer.xr.getController(i);
+  scene.add(grip); scene.add(ctrl);
+  const h = { grip, side: null, glove: null, src: null, has: false, fresh: true, prev: new THREE.Vector3(), vel: new THREE.Vector3(), pos: new THREE.Vector3() };
+  grip.addEventListener('connected', e => {
+    h.side = e.data.handedness === 'left' ? 'L' : 'R'; h.src = e.data; h.has = true; h.fresh = true;
+    if (h.glove) grip.remove(h.glove);
+    h.glove = makeGlove(COL[h.side]); grip.add(h.glove);
+  });
+  grip.addEventListener('disconnected', () => { h.has = false; if (h.glove) { grip.remove(h.glove); h.glove = null; } });
+  ctrl.addEventListener('selectstart', () => { if (state === 'menu' || state === 'end') startCountdown(); });
+  hands.push(h);
+}
+function updateHands(dt) {
+  for (const h of hands) {
+    if (!h.has) continue;
+    h.grip.getWorldPosition(tmpA);
+    if (h.fresh) { h.prev.copy(tmpA); h.fresh = false; }
+    tmpB.subVectors(tmpA, h.prev).divideScalar(Math.max(dt, 1e-3));
+    // skok powyżej 15 m/s to zgubione śledzenie, nie cios
+    if (tmpB.length() > 15) tmpB.set(0, 0, 0);
+    h.vel.lerp(tmpB, 0.6); h.prev.copy(tmpA); h.pos.copy(tmpA);
+    if (state !== 'fight') continue;
+    for (const a of active) {
+      if (a.state !== 'fly' || a.e.kind !== 'pad') continue;
+      if (a.obj.position.distanceTo(h.pos) < 0.2 && h.vel.length() > 1.2) hitPad(a, h.side, h.vel.clone(), h);
+    }
+  }
+}
+renderer.xr.addEventListener('sessionstart', () => {
+  initAudio(); actx.resume();
+  document.getElementById('info').style.display = 'none';
+  deskGloves.forEach(g => { g.visible = false; });
+  if (state !== 'menu') state = 'end';
+  drawHUD();
+});
+renderer.xr.addEventListener('sessionend', () => {
+  document.getElementById('info').style.display = '';
+  deskGloves.forEach(g => { g.visible = true; });
+  camera.position.copy(DESK); camera.rotation.set(0, 0, 0); camera.lookAt(0, 1.45, -3);
+  state = 'menu'; drawHUD();
+});
+
+// ---------- tryb komputerowy ----------
+const deskGloves = [makeGlove(COL.L), makeGlove(COL.R)];
+const GLOVE_REST = [new THREE.Vector3(-0.26, -0.3, -0.62), new THREE.Vector3(0.26, -0.3, -0.62)];
+deskGloves.forEach((g, i) => { g.position.copy(GLOVE_REST[i]); g.rotation.set(0.9, i ? -0.25 : 0.25, 0); g.userData.p = 0; camera.add(g); });
+const keys = new Set();
+addEventListener('keydown', e => keys.add(e.key.toLowerCase()));
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+// cios na komputerze: bez celowania, trafia najbliższą tarczę w zasięgu
+function deskPunch(side) {
+  if (renderer.xr.isPresenting) return;
+  deskGloves[side === 'L' ? 0 : 1].userData.p = 1;
+  if (state !== 'fight') return;
+  const inReach = active.filter(a => a.state === 'fly' && a.e.kind === 'pad' && a.z > a.zHit - 1.2);
+  if (!inReach.length) return;
+  const own = inReach.filter(a => a.e.hand === side);
+  const a = (own.length ? own : inReach).reduce((m, x) => (x.z > m.z ? x : m));
+  hitPad(a, side, PUNCH_DIR[a.e.key].clone().multiplyScalar(5), null);
+}
+renderer.domElement.addEventListener('pointerdown', e => { e.preventDefault(); deskPunch(e.button === 2 ? 'R' : 'L'); });
+addEventListener('keydown', e => {
+  if (e.repeat) return;
+  const k = e.key.toLowerCase();
+  if (k === 'f') deskPunch('L'); else if (k === 'j') deskPunch('R');
+});
+document.getElementById('start').addEventListener('click', () => startCountdown());
+function updateDesktop(dt) {
+  const duck = keys.has('c') || keys.has(' ') ? -0.35 : 0;
+  const lean = (keys.has('d') ? 0.3 : 0) - (keys.has('a') ? 0.3 : 0);
+  camera.position.x += (DESK.x + lean - camera.position.x) * Math.min(1, dt * 12);
+  camera.position.y += (DESK.y + duck - camera.position.y) * Math.min(1, dt * 12);
+  deskGloves.forEach((g, i) => {
+    g.userData.p = Math.max(0, g.userData.p - dt * 5);
+    const p = Math.sin(g.userData.p * Math.PI);
+    g.position.set(GLOVE_REST[i].x * (1 - p * 0.6), GLOVE_REST[i].y + p * 0.12, GLOVE_REST[i].z - p * 0.35);
+  });
+}
+
+// ---------- pętla ----------
+buildGym(); buildTrainer(); trainerSay('Witaj w klubie Tsubasa!', true); drawHUD();
+const clock = new THREE.Clock();
+function frame(dt, draw = true) {
+  const now = nowS();
+  if (!renderer.xr.isPresenting) updateDesktop(dt);
+  camera.getWorldPosition(head);
+  updateHands(dt);
+  if (state === 'countdown') updateCountdown();
+  if (state === 'fight') {
+    scheduleMusic(); updateChart();
+    if (bigText.visible && now - cdStart > 3.6) bigText.visible = false;
+    const sec = Math.floor(songTime());
+    if (sec !== lastHudSec) { lastHudSec = sec; drawHUD(); }
+  }
+  updateObjects(dt); updateFx(dt);
+  if (state === 'fight' && (hits + misses + dodgeSeen) !== updateHUDCount) { updateHUDCount = hits + misses + dodgeSeen; drawHUD(); }
+  for (const b of bags) b.piv.rotation.z = Math.sin(now * 1.3 + b.ph) * 0.03;
+  const dp = dust[0].geometry.attributes.position;
+  for (let i = 0; i < dp.count; i++) { let y = dp.getY(i) + dt * 0.05; if (y > 3) y = -1; dp.setY(i, y); }
+  dp.needsUpdate = true;
+  if (draw) renderer.render(scene, camera); else scene.updateMatrixWorld();
+}
+let updateHUDCount = 0;
+let manualFrames = false, lastV = null;
+renderer.setAnimationLoop(() => {
+  let dt = Math.min(clock.getDelta(), 0.05);
+  if (vnow !== null) { dt = lastV === null ? 1 / 72 : Math.max(1e-4, vnow - lastV); lastV = vnow; }
+  if (!manualFrames) frame(dt);
+});
+window.__game = { get state() { return state; }, get score() { return score; }, get combo() { return combo; }, get active() { return active.length; }, list: active, camera, startCountdown, frame,
+  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen }) };
+</script>
+</body>
+</html>
