@@ -60,7 +60,7 @@ function simplify(geo, targetTris) {
   return g;
 }
 
-async function process(name, { targetTris = 0 } = {}) {
+async function process(name, { targetTris = 0, skinned = false } = {}) {
   const t0 = performance.now();
   const gltf = await new GLTFLoader().loadAsync(`/assets/models/${name}.raw.glb`);
   let before = 0, after = 0;
@@ -68,7 +68,7 @@ async function process(name, { targetTris = 0 } = {}) {
   gltf.scene.traverse(o => {
     if (!o.isMesh) return;
     before += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
-    if (targetTris && !o.isSkinnedMesh) o.geometry = simplify(o.geometry, targetTris);
+    if (targetTris && (!o.isSkinnedMesh || skinned)) o.geometry = simplify(o.geometry, targetTris);
     after += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
     for (const m of mats) for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {

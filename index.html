@@ -872,7 +872,7 @@ function hitPad(a, side, vel, h) {
   if (correct) { combo++; maxCombo = Math.max(maxCombo, combo); }
   hits++;
   score += Math.round(100 * (correct ? 1 : 0.5) * (dirOK ? 1 : 0.6) * (perfect ? 1.5 : 1) * mult());
-  a.state = 'knock'; a.life = 0.9; a.spin = 8 + Math.random() * 8;
+  a.state = 'knock'; a.life = 0.9; a.spin = 8 + Math.random() * 8; coachHit(a, vel);
   a.vel = vel.clone().multiplyScalar(0.5).add(new THREE.Vector3(0, 1.6, 0)).clampLength(0, 8);
   const pos = a.obj.position.clone();
   popBurst(pos, speed > 4 ? 1.4 : 1);
@@ -1972,6 +1972,168 @@ function checkGate(a) {
   hudDirty = true;
 }
 
+// ---------- trener z łapami (tryb Combos): trener stoi przed graczem i wystawia łapy w miejscu ciosu ----------
+// Ręce trenera ustawia odwrotna kinematyka dwóch kości (bark, łokieć) na tle animacji z Mixamo (sprężynowanie w miejscu).
+// Łapa jest zwrócona tam, skąd nadlatuje pięść. Przy slipach i rolkach trener rzuca łapą cios, pod którym trzeba zejść.
+const COACH_DIST = 1.0;
+const coach = new THREE.Group(); coach.visible = false; scene.add(coach);
+const cm = { ready: false, root: null, mixer: null, bones: {}, mitts: {}, marks: {}, stepZ: 0, stepTo: 0, rec: { L: new THREE.Vector3(), R: new THREE.Vector3() }, from: 'none' };
+async function loadCoach() {
+  const { FBXLoader } = await import('three/addons/loaders/FBXLoader.js');
+  let gltf = null;
+  // trenerka tylko wtedy, gdy plik jest na serwerze; publicznie stoi trener zastępczy
+  const force = new URLSearchParams(location.search).get('coach');
+  for (const f of force ? [force] : ['trenerka', 'trener']) { try { gltf = await new GLTFLoader().loadAsync(`assets/models/${f}.glb`); cm.from = f; break; } catch (e) { /* następny */ } }
+  if (!gltf) return;
+  const root = gltf.scene, hips = root.getObjectByName('mixamorigHips');
+  root.traverse(o => { if (o.isMesh) { o.frustumCulled = false; o.material = new THREE.MeshToonMaterial({ map: o.material.map, gradientMap: GRAD }); } });
+  const fbx = await new FBXLoader().loadAsync('assets/anim/mx_idle_bounce.fbx'), clip = fbx.animations[0];
+  const ht = clip.tracks.find(t => t.name === 'mixamorigHips.position'), sc = ht ? hips.position.y / ht.values[1] : 0.01;
+  for (const t of clip.tracks) if (t.name.endsWith('.position')) for (let i = 0; i < t.values.length; i++) t.values[i] *= sc;
+  // ramiona steruje kinematyka, więc z klipu zostaje reszta ciała
+  clip.tracks = clip.tracks.filter(t => !/(Arm|ForeArm|Hand)/.test(t.name));
+  cm.mixer = new THREE.AnimationMixer(root); cm.mixer.clipAction(clip).play();
+  for (const s of ['L', 'R']) {
+    const n = s === 'L' ? 'Left' : 'Right';
+    cm.bones[s] = { arm: root.getObjectByName(`mixamorig${n}Arm`), fore: root.getObjectByName(`mixamorig${n}ForeArm`), hand: root.getObjectByName(`mixamorig${n}Hand`) };
+    cm.bones[s].hand.scale.setScalar(0.001);
+  }
+  coach.add(root); cm.root = root;
+  await loadMitts();
+  cm.ready = true;
+}
+async function loadMitts() {
+  const gltf = await new GLTFLoader().loadAsync('assets/models/lapa.glb');
+  const src = gltf.scene, box = new THREE.Box3().setFromObject(src), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  src.traverse(o => { if (o.isMesh) o.material = new THREE.MeshToonMaterial({ map: o.material.map, gradientMap: GRAD }); });
+  for (const s of ['L', 'R']) {
+    const m = new THREE.Group(), g = src.clone(true);
+    g.position.sub(c); g.scale.setScalar(1);
+    const holder = new THREE.Group(); holder.add(g); holder.scale.setScalar(0.27 / Math.max(size.x, size.y));
+    m.add(holder); scene.add(m); m.visible = false;
+    // znak ciosu na łapie: kolor ręki gracza i numer
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.125, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, fog: false }));
+    const sym = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, fog: false }));
+    const zf = size.z * holder.scale.x / 2 + 0.004; ring.position.z = zf; sym.position.z = zf + 0.001; ring.renderOrder = 7; sym.renderOrder = 8;
+    m.add(ring, sym);
+    cm.mitts[s] = m; cm.marks[s] = { ring, sym, key: null };
+  }
+}
+// dwukościowa kinematyka odwrotna w świecie: bark A, łokieć B, dłoń C do celu t, łokieć w stronę pole
+const ikA = new THREE.Vector3(), ikB = new THREE.Vector3(), ikC = new THREE.Vector3(), ikD = new THREE.Vector3(), ikE = new THREE.Vector3(), ikN = new THREE.Vector3();
+const ikQ = new THREE.Quaternion(), ikQ2 = new THREE.Quaternion(), ikQ3 = new THREE.Quaternion();
+function rotateBoneTo(bone, from, to) {
+  ikQ.setFromUnitVectors(from, to);
+  bone.getWorldQuaternion(ikQ2); ikQ2.premultiply(ikQ);
+  bone.parent.getWorldQuaternion(ikQ3); bone.quaternion.copy(ikQ3.invert().multiply(ikQ2));
+  bone.updateMatrixWorld(true);
+}
+function ik2(s, t, pole) {
+  const { arm, fore, hand } = cm.bones[s];
+  arm.getWorldPosition(ikA); fore.getWorldPosition(ikB); hand.getWorldPosition(ikC);
+  const l1 = ikA.distanceTo(ikB), l2 = ikB.distanceTo(ikC);
+  ikD.subVectors(t, ikA); const d = Math.min(l1 + l2 - 1e-3, Math.max(0.05, ikD.length())); ikD.normalize();
+  const cosA = Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))), sinA = Math.sqrt(1 - cosA * cosA);
+  ikN.subVectors(pole, ikA); ikN.addScaledVector(ikD, -ikN.dot(ikD)).normalize();
+  ikE.copy(ikA).addScaledVector(ikD, l1 * cosA).addScaledVector(ikN, l1 * sinA); // docelowy łokieć
+  rotateBoneTo(arm, ikB.clone().sub(ikA).normalize(), ikE.clone().sub(ikA).normalize());
+  fore.getWorldPosition(ikB); hand.getWorldPosition(ikC);
+  const tt = ikA.clone().addScaledVector(ikD, d);
+  rotateBoneTo(fore, ikC.clone().sub(ikB).normalize(), tt.sub(ikB).normalize());
+}
+const coachOn = () => cm.ready && mode === 'combo' && (state === 'countdown' || state === 'fight');
+function placeCoach() {
+  coach.position.set(base.x, 0, base.z - COACH_DIST); coach.rotation.set(0, 0, 0);
+  const sc = Math.min(1.08, Math.max(0.92, (base.y + 0.05) / 1.62)); coach.scale.setScalar(sc);
+}
+// ręka trenera dla tarczy gracza: lewa ręka gracza bije w prawą łapę trenera (stoją twarzą w twarz)
+const coachHand = playerHand => (playerHand === 'L' ? 'R' : 'L');
+const mTmp = new THREE.Vector3(), mRest = { L: new THREE.Vector3(), R: new THREE.Vector3() }, mTarget = { L: new THREE.Vector3(), R: new THREE.Vector3() }, mFace = { L: new THREE.Vector3(), R: new THREE.Vector3() };
+function updateCoach(dt) {
+  coach.visible = coachOn();
+  for (const s of ['L', 'R']) if (cm.mitts[s]) cm.mitts[s].visible = coach.visible;
+  for (const ch of trainer.children) if (ch !== bubbleSprite) ch.visible = !coach.visible;
+  if (!coach.visible) { if (trainer.userData.moved) { trainer.position.set(3.7, -1, -3.9); trainer.lookAt(0, -1, 0.5); bubbleSprite.position.set(0, 2.45, 0); bubbleSprite.scale.set(1.4, 0.7, 1); trainer.userData.moved = false; } return; }
+  if (state === 'countdown') placeCoach();
+  if (!trainer.userData.moved) { trainer.position.set(coach.position.x + 0.75, 0, coach.position.z - 0.2); trainer.rotation.set(0, -0.3, 0); bubbleSprite.position.set(0.2, 2.15, -0.4); bubbleSprite.scale.set(0.8, 0.4, 1); trainer.userData.moved = true; }
+  const st = state === 'fight' ? songTime() : -9;
+  cm.stepZ += (cm.stepTo - cm.stepZ) * Math.min(1, dt * 8); cm.root.position.z = cm.stepZ / coach.scale.x;
+  cm.mixer.update(dt); cm.root.updateMatrixWorld(true);
+  cm.stepTo = 0;
+  // spoczynek: łapy przed barkami trenera, lekko do gracza
+  for (const s of ['L', 'R']) {
+    const side = s === 'L' ? 1 : -1; // lewa ręka trenera jest po prawej stronie gracza (+x)
+    mRest[s].set(coach.position.x + side * 0.2, base.y - 0.25, coach.position.z + 0.32 + cm.stepZ);
+    mTarget[s].copy(mRest[s]); mFace[s].set(0, 0, 1);
+  }
+  const busy = { L: null, R: null };
+  for (const a of active) {
+    if (a.state !== 'fly') continue;
+    const tt = a.e.t - st;
+    if (a.e.kind === 'pad') {
+      const s = coachHand(a.e.hand);
+      if (busy[s] && busy[s].e.t <= a.e.t) continue;
+      busy[s] = a;
+    }
+  }
+  for (const s of ['L', 'R']) {
+    const a = busy[s];
+    if (a) {
+      const tt = a.e.t - st, k = smooth01(1 - (tt - 0.14) / 0.5);
+      // łapa w miejscu ciosu, zwrócona tam, skąd leci pięść
+      mTarget[s].lerpVectors(mRest[s], mTmp.set(a.x, a.y, a.zHit), k);
+      mFace[s].copy(PUNCH_DIR[a.e.key]).negate();
+      a.obj.position.copy(mTarget[s]); a.obj.visible = false;
+      setMark(s, a.e.key, k);
+    } else setMark(s, null, 0);
+  }
+  // uniki: trener rzuca wolną ręką cios, pod którym trzeba zejść albo się odchylić
+  for (const a of active) {
+    if (a.state !== 'fly' || a.e.kind === 'pad') continue;
+    a.obj.visible = false;
+    const tt = a.e.t - st; if (tt > 0.7 || tt < -0.25) continue;
+    const s = a.e.kind === 'wallL' ? 'R' : a.e.kind === 'wallR' ? 'L' : (busy.L ? 'R' : 'L');
+    if (busy[s]) continue;
+    const u = smooth01(1 - tt / 0.7), side = s === 'L' ? 1 : -1;
+    if (a.e.kind === 'duck') {
+      // sierp łapą na wysokości głowy: zamach na bok, potem przelot na drugą stronę
+      const P0 = new THREE.Vector3(base.x + side * 0.55, base.y + 0.02, base.z - 0.3), P1 = new THREE.Vector3(base.x - side * 0.45, base.y + 0.02, base.z - 0.3);
+      if (tt > 0.3) mTarget[s].lerpVectors(mRest[s], P0, smooth01((0.7 - tt) / 0.4));
+      else mTarget[s].lerpVectors(P0, P1, smooth01((0.3 - tt) / 0.45));
+      mFace[s].set(-side, 0, 0.3).normalize();
+    } else {
+      // prosty łapą w głowę po stronie przeszkody: gracz robi slip w drugą stronę
+      mTmp.set(base.x + (a.e.kind === 'wallL' ? -0.05 : 0.05), base.y, base.z - 0.12);
+      mTarget[s].lerpVectors(mRest[s], mTmp, u); mFace[s].set(0, 0, 1);
+    }
+    cm.stepTo = Math.max(cm.stepTo, 0.35 * u);
+    if (a.e.kind === 'duck' && tt < 0.4 && !a.whoosh) { a.whoosh = true; sfxWhoosh(); }
+  }
+  // odrzut łapy po trafieniu i kinematyka
+  for (const s of ['L', 'R']) {
+    cm.rec[s].multiplyScalar(Math.max(0, 1 - dt * 9));
+    const target = mTmp.copy(mTarget[s]).add(cm.rec[s]);
+    const mitt = cm.mitts[s];
+    mitt.position.lerp(target, Math.min(1, dt * 22));
+    mitt.lookAt(mitt.position.clone().add(mFace[s]));
+    const pole = mTmp.set(coach.position.x + (s === 'L' ? 1 : -1) * 0.6, base.y - 0.9, coach.position.z - 0.3);
+    ik2(s, mitt.position.clone().addScaledVector(mFace[s], -0.07), pole);
+  }
+}
+const smooth01 = x => { const k = Math.max(0, Math.min(1, x)); return k * k * (3 - 2 * k); };
+function setMark(s, key, k) {
+  const m = cm.marks[s]; if (!m) return;
+  if (key && m.key !== key) { m.sym.material.map = symTex(key); m.sym.material.needsUpdate = true; m.ring.material.color.setHex(COL[key.endsWith('L') ? 'L' : 'R']); m.key = key; }
+  m.ring.material.opacity = key ? k : 0; m.sym.material.opacity = key ? k : 0;
+}
+// uderzenie w łapę: odrzut w kierunku ciosu
+function coachHit(a, vel) {
+  if (!cm.ready || mode !== 'combo') return;
+  const s = coachHand(a.e.hand);
+  cm.rec[s].copy(vel).clampLength(0, 6).multiplyScalar(0.03);
+}
+loadCoach().catch(e => console.warn('trener z modelu niedostępny, zostają lecące tarcze', e));
+
 // ---------- menu w VR: uderz tarczę, żeby wybrać tryb ----------
 const menuPads = [];
 let menuArmAt = 0;
@@ -2154,7 +2316,7 @@ function frame(dt, draw = true) {
     const sec = Math.floor(songTime());
     if (sec !== lastHudSec) { lastHudSec = sec; drawHUD(); }
   }
-  updateObjects(dt); updateLine(); updateFx(dt);
+  updateObjects(dt); updateCoach(dt); updateLine(); updateFx(dt);
   if (flashT > 0) { flashT -= dt; hitFlash.material.opacity = Math.max(0, flashT / 0.35) * 0.45; if (flashT <= 0) hitFlash.visible = false; }
   if (state === 'fight' && (hits + misses + dodgeSeen) !== updateHUDCount) { updateHUDCount = hits + misses + dodgeSeen; hudDirty = true; }
   if (hudDirty) drawHUD();
