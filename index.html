@@ -435,6 +435,9 @@ function modelGlove(side) {
   holder.quaternion.setFromRotationMatrix(GLOVE_BASIS);
   holder.scale.setScalar(0.3 / Math.max(size.x, size.y, size.z));
   const g = new THREE.Group(); g.add(holder);
+  // opaska na mankiecie w kolorze ręki: ten sam kolor mają cele dla tej ręki
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.058, 0.014, 8, 32), new THREE.MeshBasicMaterial({ color: PIPING[side], fog: false }));
+  band.position.z = 0.1; band.add(outlineOf(band.geometry, 0.004)); g.add(band);
   if (side === 'R') g.scale.x = -1;
   return g;
 }
@@ -2005,7 +2008,9 @@ async function loadCoach() {
 async function loadMitts() {
   const gltf = await new GLTFLoader().loadAsync('assets/models/lapa.glb');
   const src = gltf.scene, box = new THREE.Box3().setFromObject(src), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
-  src.traverse(o => { if (o.isMesh) o.material = new THREE.MeshToonMaterial({ map: o.material.map, gradientMap: GRAD }); });
+  // łapy neutralnie białe: kolor celu (czerwony lewa, niebieski prawa) ma się odcinać od łapy
+  const mm = []; src.traverse(o => { if (o.isMesh) mm.push(o); });
+  for (const o of mm) { o.material = new THREE.MeshToonMaterial({ color: 0xf4f1ea, gradientMap: GRAD }); o.add(outlineOf(o.geometry, 0.02)); }
   for (const s of ['L', 'R']) {
     const m = new THREE.Group(), g = src.clone(true);
     g.position.sub(c); g.scale.setScalar(1);
@@ -2015,8 +2020,14 @@ async function loadMitts() {
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.125, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, fog: false }));
     const sym = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, fog: false }));
     const zf = size.z * holder.scale.x / 2 + 0.004; ring.position.z = zf; sym.position.z = zf + 0.001; ring.renderOrder = 7; sym.renderOrder = 8;
-    m.add(ring, sym);
-    cm.mitts[s] = m; cm.marks[s] = { ring, sym, key: null };
+    // pełny kolorowy dysk: kolor ręki gracza, którą trzeba uderzyć
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(0.1, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, fog: false }));
+    disc.position.z = zf - 0.0005; disc.renderOrder = 7; m.add(disc);
+    // pierścień rytmu: kurczy się do krawędzi łapy dokładnie w chwili ciosu
+    const beat = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.135, 40), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, fog: false }));
+    beat.position.z = zf + 0.002; beat.renderOrder = 8;
+    m.add(ring, sym, beat);
+    cm.mitts[s] = m; cm.marks[s] = { ring, sym, beat, disc, key: null };
   }
 }
 // dwukościowa kinematyka odwrotna w świecie: bark A, łokieć B, dłoń C do celu t, łokieć w stronę pole
@@ -2085,7 +2096,8 @@ function updateCoach(dt) {
       mFace[s].copy(PUNCH_DIR[a.e.key]).negate();
       a.obj.position.copy(mTarget[s]); a.obj.visible = false;
       setMark(s, a.e.key, k);
-    } else setMark(s, null, 0);
+      const bm = cm.marks[s].beat; bm.scale.setScalar(1 + 2.2 * Math.max(0, tt) / 0.64); bm.material.opacity = tt > -0.05 ? Math.min(1, k * 1.2) : 0;
+    } else { setMark(s, null, 0); if (cm.marks[s]) cm.marks[s].beat.material.opacity = 0; }
   }
   // uniki: trener rzuca wolną ręką cios, pod którym trzeba zejść albo się odchylić
   for (const a of active) {
@@ -2123,8 +2135,8 @@ function updateCoach(dt) {
 const smooth01 = x => { const k = Math.max(0, Math.min(1, x)); return k * k * (3 - 2 * k); };
 function setMark(s, key, k) {
   const m = cm.marks[s]; if (!m) return;
-  if (key && m.key !== key) { m.sym.material.map = symTex(key); m.sym.material.needsUpdate = true; m.ring.material.color.setHex(COL[key.endsWith('L') ? 'L' : 'R']); m.key = key; }
-  m.ring.material.opacity = key ? k : 0; m.sym.material.opacity = key ? k : 0;
+  if (key && m.key !== key) { m.sym.material.map = symTex(key); m.sym.material.needsUpdate = true; m.ring.material.color.setHex(0xffffff); m.disc.material.color.setHex(COL[key.endsWith('L') ? 'L' : 'R']); m.key = key; }
+  m.ring.material.opacity = key ? k : 0; m.sym.material.opacity = key ? k : 0; m.disc.material.opacity = key ? k * 0.95 : 0;
 }
 // uderzenie w łapę: odrzut w kierunku ciosu
 function coachHit(a, vel) {
