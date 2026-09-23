@@ -174,3 +174,35 @@ export function ballsUntil(cond, style = 'dodge', max = 72 * 30, opts) {
   for (let i = 0; i < max; i++) { ballsStep(style, opts); pump(1); if (cond(G)) return true; if (G.state === 'end') return false; }
   return false;
 }
+
+// ---------- Power Bag ----------
+// Bot bije jak bokser: zamach do punktu przed strefą, cios wzdłuż kierunku ciosu, powrót do gardy.
+// speed = prędkość pięści w ciosie (m/s); wrongHand = bije zawsze tą samą ręką (test, czy zła ręka nie zalicza strefy)
+const bagBot = { L: { ph: 'guard' }, R: { ph: 'guard' } };
+const wpos = o => [o.matrixWorld.elements[12], o.matrixWorld.elements[13], o.matrixWorld.elements[14]];
+export function bagStep({ speed = 6, wrongHand = false } = {}) {
+  setHead(0, 1.6);
+  const key = G.bagKey;
+  for (const s of ['L', 'R']) {
+    const st = bagBot[s], other = bagBot[s === 'L' ? 'R' : 'L'];
+    const guard = [head[0] + (s === 'L' ? -0.15 : 0.15), head[1] - 0.12, -0.25];
+    const k = G.flurry ? (s === 'L' ? 'jabL' : 'jabR') : key;
+    const mine = k && (wrongHand ? s === 'R' : k.endsWith(s));
+    if (st.ph === 'guard' && mine && other.ph === 'guard') { st.ph = 'wind'; st.key = wrongHand ? k.replace(/[LR]$/, 'R') : k; st.p0 = G.stats().bag.punches; }
+    let t = guard, sp = 3;
+    if (st.ph !== 'guard') {
+      const zk = G.zoneMarks[st.key] ? st.key : k;
+      const zp = wpos(G.zoneMarks[zk].g), d = DIR[zk];
+      if (st.ph === 'wind') { t = zp.map((v, i) => v - d[i] * 0.3); sp = 4; if (Math.hypot(...t.map((v, i) => v - glove[s][i])) < 0.03) st.ph = 'strike'; }
+      else if (st.ph === 'strike') { t = zp.map((v, i) => v + d[i] * 0.1); sp = speed; if (G.stats().bag.punches > st.p0 || Math.hypot(...t.map((v, i) => v - glove[s][i])) < 0.02) st.ph = 'back'; }
+      else { t = guard; sp = 4; if (Math.hypot(...t.map((v, i) => v - glove[s][i])) < 0.03) st.ph = 'guard'; }
+    }
+    const g = glove[s], dd = t.map((v, i) => v - g[i]), l = Math.hypot(...dd), m = sp / 72;
+    const kk = l > m ? m / l : 1;
+    setGlove(s, g.map((v, i) => v + dd[i] * kk));
+  }
+}
+export function runBag(frames, opts) {
+  for (let i = 0; i < frames; i++) { bagStep(opts); pump(1); if (G.state === 'end') break; }
+  return G.stats();
+}
