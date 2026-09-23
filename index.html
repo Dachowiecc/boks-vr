@@ -13,7 +13,7 @@
   #info { position:fixed; left:16px; top:16px; max-width:min(420px, calc(100vw - 64px)); background:rgba(20,16,14,.82); border:2px solid var(--accent); padding:14px 16px; border-radius:10px; font-size:14px; line-height:1.5; z-index:5; }
   #info h1 { margin:0 0 6px; font-family:Bangers, Impact, sans-serif; font-weight:400; letter-spacing:1px; font-size:34px; color:var(--accent); }
   #info b { color:var(--accent); }
-  #start, #startDef, #startBalls, #startBag, #startLine { margin-top:10px; background:var(--red); color:#fff; border:2px solid #111; border-radius:8px; padding:10px 18px; font:400 22px Bangers, Impact, sans-serif; letter-spacing:1px; cursor:pointer; }
+  #start, #startDef, #startBalls, #startBag, #startLine, #startWorkout { margin-top:10px; background:var(--red); color:#fff; border:2px solid #111; border-radius:8px; padding:10px 18px; font:400 22px Bangers, Impact, sans-serif; letter-spacing:1px; cursor:pointer; }
   #err { color:#ff8a80; white-space:pre-wrap; font-size:12px; }
 </style>
 <script type="importmap">
@@ -33,8 +33,9 @@
   <div><b>Ball Machine:</b> the machine shoots tennis balls at your head. Yellow: slip or duck. Red: punch it. Three at once: roll under them. Every 10 balls the level goes up.</div>
   <div><b>Power Bag:</b> 90 seconds on the heavy bag. Hit the lit numbers with the right hand, as hard as you can. The last 15 seconds are a flurry: double damage.</div>
   <div><b>Slip Line:</b> a glowing line shows where your head goes. Put your head through every ring (slip, roll under, duck), then punch the counter pad.</div>
+  <div><b>Full Workout:</b> all five drills in a row with short rests, like a real class. Endless drills stop after 60 seconds.</div>
   <div><b>Desktop:</b> left / right mouse button or F / J for left / right hand (hold to block in Don't Get Hit). C to duck, A / D to slip.</div>
-  <button id="start">COMBOS</button> <button id="startBalls">BALL MACHINE</button> <button id="startBag">POWER BAG</button> <button id="startLine">SLIP LINE</button> <button id="startDef">DON'T GET HIT</button>
+  <button id="start">COMBOS</button> <button id="startBalls">BALL MACHINE</button> <button id="startBag">POWER BAG</button> <button id="startLine">SLIP LINE</button> <button id="startWorkout">FULL WORKOUT</button> <button id="startDef">DON'T GET HIT</button>
   <div id="err"></div>
 </div>
 <script>
@@ -644,8 +645,8 @@ slowVig.renderOrder = 19; slowVig.position.set(0, 0, -0.5); slowVig.visible = fa
 const bigText = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex('3'), transparent: true, depthTest: false, fog: false }));
 bigText.renderOrder = 15; bigText.visible = false; scene.add(bigText);
 
-const bestOf = { combo: 0, defense: 0, balls: 0, bag: 0, line: 0 };
-const BEST_KEY = { combo: 'ana-best', defense: 'ana-best-def', balls: 'ana-best-balls', bag: 'ana-best-bag', line: 'ana-best-line' };
+const bestOf = { combo: 0, defense: 0, balls: 0, bag: 0, line: 0, workout: 0 };
+const BEST_KEY = { combo: 'ana-best', defense: 'ana-best-def', balls: 'ana-best-balls', bag: 'ana-best-bag', line: 'ana-best-line', workout: 'ana-best-workout' };
 try { for (const m in BEST_KEY) bestOf[m] = +localStorage.getItem(BEST_KEY[m]) || 0; } catch (e) { /* bez zapisu */ }
 function hearts(g, x, y, n, of) {
   for (let i = 0; i < of; i++) {
@@ -662,6 +663,15 @@ function drawHUD() {
   g.fillStyle = 'rgba(20,16,14,.88)'; g.strokeStyle = '#ffd23f'; g.lineWidth = 8;
   g.beginPath(); g.roundRect(6, 6, w - 12, h - 12, 28); g.fill(); g.stroke();
   g.textAlign = 'center'; g.textBaseline = 'middle';
+  if (workout && state === 'end') {
+    const done = workout.done, next = done ? null : MODE_NAME[WORKOUT[workout.idx + 1]];
+    g.fillStyle = '#ffd23f'; g.font = `400 84px ${BANG}`; g.fillText(done ? 'WORKOUT COMPLETE' : `ROUND ${workout.idx + 1} OF ${WORKOUT.length} DONE`, w / 2, 70);
+    g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`;
+    g.fillText(`${MODE_NAME[mode]}: ${score} · Workout total ${workout.total}`, w / 2, 160);
+    g.fillStyle = '#7dd3ff'; g.fillText(done ? `Best workout ${bestOf.workout || 0}` : `Rest... next: ${next} in ${Math.max(0, workout.shown || 0)}`, w / 2, 222);
+    if (done) { g.fillStyle = '#ffd23f'; g.fillText(vr ? 'Punch a target to go again' : 'Pick a mode to go again', w / 2, 278); }
+    hudTex.needsUpdate = true; return;
+  }
   if (state === 'menu') {
     g.fillStyle = '#ffd23f'; g.font = `400 120px ${BANG}`; g.fillText('ANA BOXING GYM', w / 2, 120);
     g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`; g.fillText(vr ? 'Punch a target to pick a mode' : 'Pick a mode in the panel on the left', w / 2, 200);
@@ -809,6 +819,45 @@ function drawRankBar(g, w, y) {
   g.fillText(`${RANKS[r][0]} · ${xp} XP` + (r + 1 < RANKS.length ? ` · next: ${RANKS[r + 1][0]}` : ''), w / 2, y);
   g.fillStyle = '#3a312a'; g.fillRect(120, y + 22, w - 240, 12); g.fillStyle = '#7dd3ff'; g.fillRect(120, y + 22, (w - 240) * Math.min(1, p), 12);
 }
+// ---------- FULL WORKOUT: pięć rund po kolei z przerwami, jak zajęcia w FitXR ----------
+const WORKOUT = ['combo', 'balls', 'bag', 'line', 'defense'];
+const MODE_NAME = { combo: 'COMBOS', balls: 'BALL MACHINE', bag: 'POWER BAG', line: 'SLIP LINE', defense: "DON'T GET HIT" };
+const WORKOUT_CAP = 60, REST = 9;
+let workout = null;
+function startWorkout() {
+  workout = { idx: 0, total: 0, nextAt: 0, scores: [] };
+  trainerSay('Five rounds. Give me everything, kid!', true);
+  startCountdown(WORKOUT[0]);
+}
+function updateWorkout() {
+  if (!workout) return;
+  // rundy bez końca (maszyna, rywal) mają w treningu limit czasu
+  if (state === 'fight' && (mode === 'balls' || mode === 'defense') && songTime() > WORKOUT_CAP) endRound();
+  if (state === 'end' && workout.nextAt) {
+    const left = Math.ceil(workout.nextAt - nowS());
+    if (left !== workout.shown) { workout.shown = left; hudDirty = true; }
+    if (left <= 0) { workout.nextAt = 0; workout.idx++; startCountdown(WORKOUT[workout.idx]); }
+  }
+}
+function workoutRoundDone() {
+  workout.total += score; workout.scores.push(score);
+  if (workout.idx < WORKOUT.length - 1) {
+    workout.nextAt = nowS() + REST;
+    const next = MODE_NAME[WORKOUT[workout.idx + 1]];
+    setTimeout(() => trainerSay(`Breathe. Next up: ${next.toLowerCase()}.`, true), 1800);
+    return;
+  }
+  // koniec treningu
+  const bonus = Math.round(workout.total / 60);
+  xp += bonus; try { localStorage.setItem('ana-xp', String(xp)); } catch (e) { /* bez zapisu */ }
+  const rec = workout.total > (bestOf.workout || 0);
+  if (rec) { bestOf.workout = workout.total; try { localStorage.setItem('ana-best-workout', String(workout.total)); } catch (e) { /* bez zapisu */ } }
+  popWord('WORKOUT COMPLETE!', new THREE.Vector3(head.x, head.y + 0.4, head.z - 1.5), '#ffd23f', 2.6, 2.6, new THREE.Vector3(0, 0.03, 0));
+  popWord('+' + bonus + ' XP BONUS', new THREE.Vector3(head.x, head.y + 0.1, head.z - 1.5), '#7dd3ff', 1.4, 2.6, new THREE.Vector3(0, 0.03, 0));
+  if (actx) bell(actx.currentTime, 4); flashSpeedLines();
+  setTimeout(() => trainerSay(rec ? 'Best workout ever! Rest now, champ.' : 'Workout done. Proud of you, kid!', true), 1500);
+  workout.done = true; refreshMenuBest();
+}
 function endRound() {
   state = 'end'; bell(actx.currentTime, 3); menuArmAt = nowS() + 1.2;
   if (!renderer.xr.isPresenting) document.getElementById('info').style.display = '';
@@ -816,6 +865,7 @@ function endRound() {
   const rec = score > bestOf[mode];
   if (rec) { bestOf[mode] = score; try { localStorage.setItem(key, String(score)); } catch (e) { /* bez zapisu */ } }
   refreshMenuBest(); gainXP();
+  if (workout && !workout.done) workoutRoundDone();
   if (mode === 'bag') {
     const r = bagRank();
     popWord('RANK ' + r, new THREE.Vector3(head.x, head.y + 0.15, head.z - 1.4), r === 'S' ? '#ffd23f' : '#fff4dc', 2.6, 2.2, new THREE.Vector3(0, 0.03, 0)); flashSpeedLines();
@@ -1992,6 +2042,42 @@ function updateLine() {
   }
   pa.needsUpdate = true;
 }
+// strzałka ruchu głowy przed najbliższą obręczą: czytelna bez czytania tekstu
+function moveTex(kind) {
+  return canvasTex(512, 384, (g, w, h) => {
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    const draw = (stroke, lw) => {
+      g.strokeStyle = stroke; g.lineWidth = lw; g.beginPath();
+      if (kind === 'down') { g.moveTo(256, 40); g.lineTo(256, 250); g.moveTo(170, 170); g.lineTo(256, 256); g.lineTo(342, 170); }
+      else if (kind === 'left' || kind === 'right') { const s = kind === 'left' ? -1 : 1; g.moveTo(256 - s * 170, 150); g.lineTo(256 + s * 150, 150); g.moveTo(256 + s * 70, 70); g.lineTo(256 + s * 156, 150); g.lineTo(256 + s * 70, 230); }
+      else { const s = kind === 'rollL' ? -1 : 1; g.moveTo(256 - s * 170, 60); g.quadraticCurveTo(256 - s * 20, 420, 256 + s * 170, 70); g.moveTo(256 + s * 90, 90); g.lineTo(256 + s * 172, 66); g.lineTo(256 + s * 190, 150); }
+      g.stroke();
+    };
+    draw('#111', 64); draw('#ffd23f', 36);
+    g.font = `400 70px ${BANG}`; g.textAlign = 'center'; g.lineWidth = 12; g.strokeStyle = '#111'; g.fillStyle = '#fff';
+    const t = { down: 'DUCK', left: 'SLIP', right: 'SLIP', rollL: 'ROLL', rollR: 'ROLL' }[kind];
+    g.strokeText(t, 256, 350); g.fillText(t, 256, 350);
+  }, 'move' + kind);
+}
+const moveCue = new THREE.Sprite(new THREE.SpriteMaterial({ map: moveTex('down'), transparent: true, depthTest: false, fog: false }));
+moveCue.renderOrder = 13; moveCue.visible = false; scene.add(moveCue);
+function updateMoveCue() {
+  moveCue.visible = false;
+  if (mode !== 'line' || state !== 'fight') return;
+  const st = songTime();
+  const gates = active.filter(a => a.e.kind === 'gate' && a.state === 'fly' && !a.e.center && a.e.t - st > 0.05).sort((a, b) => a.e.t - b.e.t);
+  const g0 = gates[0]; if (!g0 || g0.e.t - st > 1.3) return;
+  const g1 = gates[1], low = g0.e.dy < -0.2;
+  let kind = low ? 'down' : g0.e.dx < 0 ? 'left' : 'right';
+  if (low && g1 && g1.e.t - g0.e.t < 0.35 && Math.abs(g1.e.dx) > 0.15) kind = g1.e.dx < 0 ? 'rollL' : 'rollR';
+  if (moveCue.userData.kind !== kind) { moveCue.material.map = moveTex(kind); moveCue.material.needsUpdate = true; moveCue.userData.kind = kind; }
+  const k = 1 - (g0.e.t - st) / 1.3;
+  moveCue.visible = true; moveCue.material.opacity = Math.min(1, k * 3);
+  moveCue.position.set(base.x + (kind === 'left' ? -0.35 : kind === 'right' ? 0.35 : 0), base.y + 0.32, base.z - 1.2);
+  const sc = 0.45 * (1 + 0.06 * Math.sin(st * 14)); moveCue.scale.set(sc, sc * 0.75, 1);
+  // najbliższa obręcz większa i jaśniejsza
+  for (const a of gates) a.obj.scale.setScalar(a === g0 ? 1.25 : 1);
+}
 let gatesOk = 0, gatesSeen = 0, gateChain = 0;
 function checkGate(a) {
   gatesSeen++;
@@ -2188,7 +2274,7 @@ const menuPads = [];
 let menuArmAt = 0;
 function buildMenu() {
   const geo = new THREE.CylinderGeometry(0.12, 0.12, 0.07, 28); geo.rotateX(Math.PI / 2);
-  for (const [m, label, col, x, y] of [['combo', 'COMBOS', 0xffd23f, -0.36, 0.02], ['balls', 'BALL MACHINE', 0xff7a1a, 0, 0.02], ['bag', 'POWER BAG', 0xe8412c, 0.36, 0.02], ['line', 'SLIP LINE', 0x7dd3ff, -0.18, -0.42], ['defense', "DON'T GET HIT", 0x7dff8a, 0.18, -0.42]]) {
+  for (const [m, label, col, x, y] of [['combo', 'COMBOS', 0xffd23f, -0.36, 0.02], ['balls', 'BALL MACHINE', 0xff7a1a, 0, 0.02], ['bag', 'POWER BAG', 0xe8412c, 0.36, 0.02], ['line', 'SLIP LINE', 0x7dd3ff, -0.36, -0.42], ['workout', 'FULL WORKOUT', 0xf4f1e8, 0, -0.42], ['defense', "DON'T GET HIT", 0x7dff8a, 0.36, -0.42]]) {
     const g = new THREE.Group();
     g.add(toon(geo, col, { outline: 0.018 }));
     const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex(label, '#fff'), transparent: true, depthTest: false, fog: false }));
@@ -2206,7 +2292,7 @@ function bestLabelTex(n) {
 }
 function refreshMenuBest() { for (const g of menuPads) { g.userData.best.material.map = bestLabelTex(Math.round(bestOf[g.userData.mode] || 0)); g.userData.best.material.needsUpdate = true; } }
 function updateMenu(dt) {
-  const show = renderer.xr.isPresenting && (state === 'menu' || state === 'end');
+  const show = renderer.xr.isPresenting && (state === 'menu' || (state === 'end' && (!workout || workout.done)));
   for (const g of menuPads) {
     g.visible = show;
     if (!show) continue;
@@ -2221,7 +2307,7 @@ function updateMenu(dt) {
     if (!h.has || h.vel.length() < 1.2) continue;
     for (const g of menuPads) if (g.position.distanceTo(h.pos) < 0.22) {
       popBurst(g.position.clone(), 1.2); sfxHit(h.vel.length()); buzz(h, 0.8, 60);
-      startCountdown(g.userData.mode); return;
+      if (g.userData.mode === 'workout') startWorkout(); else { workout = null; startCountdown(g.userData.mode); } return;
     }
   }
 }
@@ -2246,7 +2332,7 @@ for (let i = 0; i < 2; i++) {
     swapGlove({ side: h.side, get: () => h.glove, set: g => { h.glove = g; } });
   });
   grip.addEventListener('disconnected', () => { h.has = false; if (h.glove) { grip.remove(h.glove); h.glove = null; } });
-  ctrl.addEventListener('selectstart', () => { if ((state === 'menu' || state === 'end') && nowS() >= menuArmAt) startCountdown(lastMode); });
+  ctrl.addEventListener('selectstart', () => { if ((state === 'menu' || (state === 'end' && (!workout || workout.done))) && nowS() >= menuArmAt) { workout = null; startCountdown(lastMode); } });
   hands.push(h);
   gloveSlots.push({ get side() { return h.side; }, get: () => h.glove, set: g => { h.glove = g; } });
 }
@@ -2320,11 +2406,12 @@ addEventListener('keydown', e => {
   if (k === 'f') deskDown('L'); else if (k === 'j') deskDown('R');
 });
 addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (k === 'f') deskGuard.L = false; if (k === 'j') deskGuard.R = false; });
-document.getElementById('start').addEventListener('click', () => startCountdown('combo'));
-document.getElementById('startDef').addEventListener('click', () => startCountdown('defense'));
-document.getElementById('startBalls').addEventListener('click', () => startCountdown('balls'));
-document.getElementById('startBag').addEventListener('click', () => startCountdown('bag'));
-document.getElementById('startLine').addEventListener('click', () => startCountdown('line'));
+document.getElementById('start').addEventListener('click', () => { workout = null; startCountdown('combo'); });
+document.getElementById('startDef').addEventListener('click', () => { workout = null; startCountdown('defense'); });
+document.getElementById('startBalls').addEventListener('click', () => { workout = null; startCountdown('balls'); });
+document.getElementById('startBag').addEventListener('click', () => { workout = null; startCountdown('bag'); });
+document.getElementById('startLine').addEventListener('click', () => { workout = null; startCountdown('line'); });
+document.getElementById('startWorkout').addEventListener('click', () => startWorkout());
 function updateDesktop(dt) {
   const duck = keys.has('c') || keys.has(' ') ? -0.35 : 0;
   const lean = (keys.has('d') ? 0.3 : 0) - (keys.has('a') ? 0.3 : 0);
@@ -2347,8 +2434,10 @@ function frame(dt, draw = true) {
   camera.getWorldPosition(head);
   updateHands(dt);
   if (state === 'countdown') updateCountdown();
+  updateWorkout();
   updateMenu(dt);
-  showRival(mode === 'defense' && state !== 'menu');
+  // po rundzie rywal znika, gdy wraca menu (inaczej animacja zwycięstwa wchodzi graczowi w twarz)
+  showRival(mode === 'defense' && state !== 'menu' && !(state === 'end' && nowS() > menuArmAt + 1.3));
   if (mode === 'defense' && state !== 'menu') updateRivalModel(dt);
   if (mode === 'defense' && (state === 'countdown' || state === 'end')) { if (state === 'countdown') placeRival(); updateRivalIdle(); }
   bm.visible = mode === 'balls' && state !== 'menu'; placeHUD();
@@ -2365,7 +2454,7 @@ function frame(dt, draw = true) {
     const sec = Math.floor(songTime());
     if (sec !== lastHudSec) { lastHudSec = sec; drawHUD(); }
   }
-  updateObjects(dt); updateCoach(dt); updateLine(); updateFx(dt);
+  updateObjects(dt); updateCoach(dt); updateLine(); updateMoveCue(); updateFx(dt);
   if (flashT > 0) { flashT -= dt; hitFlash.material.opacity = Math.max(0, flashT / 0.35) * 0.45; if (flashT <= 0) hitFlash.visible = false; }
   if (state === 'fight' && (hits + misses + dodgeSeen) !== updateHUDCount) { updateHUDCount = hits + misses + dodgeSeen; hudDirty = true; }
   if (hudDirty) drawHUD();
@@ -2385,7 +2474,7 @@ renderer.setAnimationLoop(() => {
   if (!manualFrames) frame(dt);
 });
 window.__game = { get state() { return state; }, get score() { return score; }, get combo() { return combo; }, get active() { return active.length; }, list: active, camera, startCountdown, frame,
-  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken, level: bLevel, ball: { ...BS }, bag: { ...BG } }), punches, menuPads, rGloves, makeGlove, scene, balls, BS, get level() { return bLevel; }, get lives() { return lives; }, get slow() { return slowT; }, bm, bmMuzzle, placeMachine, BG, zoneMarks, get bagKey() { return bagCurCombo ? bagCurCombo.keys[bagCallIdx] : null; }, get flurry() { return bagFlurry; }, bagRoot, get gates() { return { ok: gatesOk, seen: gatesSeen }; }, counterTgt, get counters() { return counters; } };
+  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken, level: bLevel, ball: { ...BS }, bag: { ...BG } }), punches, menuPads, rGloves, makeGlove, scene, balls, BS, get level() { return bLevel; }, get lives() { return lives; }, get slow() { return slowT; }, bm, bmMuzzle, placeMachine, BG, zoneMarks, get bagKey() { return bagCurCombo ? bagCurCombo.keys[bagCallIdx] : null; }, get flurry() { return bagFlurry; }, bagRoot, get gates() { return { ok: gatesOk, seen: gatesSeen }; }, counterTgt, get counters() { return counters; }, get workout() { return workout; }, startWorkout };
 </script>
 </body>
 </html>
