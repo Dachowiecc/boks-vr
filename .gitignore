@@ -1,3 +1,7 @@
 test/zrzuty/
 test/apply_*.py
 test/odbior.py
+assets/src/
+assets/models/*.raw.glb
+assets/models/trenerka.glb
+assets/podglad*

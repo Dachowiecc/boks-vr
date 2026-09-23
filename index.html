@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ring Tsubasa VR</title>
+<title>ANA Boxing Gym VR</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Noto+Sans+JP:wght@900&display=swap" rel="stylesheet">
@@ -25,7 +25,7 @@
 </head>
 <body>
 <div id="info">
-  <h1>Ring Tsubasa</h1>
+  <h1>ANA Boxing Gym</h1>
   <div><b>Headset:</b> press ENTER VR below, then punch a target to pick a mode.</div>
   <div><b>Combos:</b> red pads are your left hand (L), blue pads your right (R). Numbers are boxing calls: 1 jab, 2 cross, 3 lead hook, 4 rear hook, 5 lead uppercut, 6 rear uppercut.</div>
   <div><b>Orange bar:</b> roll under it. <b>Yellow wall:</b> slip your head the way the arrow points.</div>
@@ -40,6 +40,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // ---------- stałe gry ----------
 const BPM = 120, BEAT = 60 / BPM, ROUND_BARS = 40, SPEED = 6, LEAD = 1.8;
@@ -65,7 +66,7 @@ try {
   await Promise.race([
     Promise.all([
       document.fonts.load('64px Bangers', 'BAM ĄĘŁ'),
-      document.fonts.load('900 64px "Noto Sans JP"', '翼ボクシングジム根性闘魂ドンバン'),
+      document.fonts.load('900 64px "Noto Sans JP"', 'アナボクシングジム根性闘魂ドンバン'),
     ]),
     new Promise(r => setTimeout(r, 2500)),
   ]);
@@ -223,29 +224,22 @@ const aoMat = new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, depth
 const bags = [];
 const dust = [];
 function buildGym() {
-  const woodTex = canvasTex(512, 512, (g, w, h) => {
-    const cols = ['#b9824c', '#b07943', '#c08b55', '#a8733f'], pw = 64;
-    for (let i = 0; i < 8; i++) {
-      g.fillStyle = cols[i % 4]; g.fillRect(i * pw, 0, pw, h);
-      g.fillStyle = 'rgba(60,30,10,.55)'; g.fillRect(i * pw, 0, 3, h); g.fillRect(i * pw, (i * 197) % h, pw, 3);
-    }
-  });
-  woodTex.wrapS = woodTex.wrapT = THREE.RepeatWrapping; woodTex.repeat.set(5, 6);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(16, 20), toonMat(0xffffff, woodTex));
+  // Ściany, podłoga i sufit to malowane tła anime z Recraftu (assets/tex). Światło jest już namalowane,
+  // więc materiały są nieoświetlone (MeshBasic), jak tło w kreskówce.
+  const tl = new THREE.TextureLoader();
+  const img = (name, rx = 1, ry = 1) => {
+    const t = tl.load(`assets/tex/${name}.jpg`); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+    if (rx !== 1 || ry !== 1) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); }
+    return new THREE.MeshBasicMaterial({ map: t, fog: false });
+  };
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(16, 20), img('podloga', 4, 5));
   floor.rotation.x = -Math.PI / 2; put(floor, 0, -1, -2);
-
-  const wallBase = canvasTex(256, 512, (g, w, h) => {
-    g.fillStyle = '#efe0bd'; g.fillRect(0, 0, w, h);
-    g.fillStyle = 'rgba(120,90,50,.10)'; for (let y = 0; y < h * 0.7; y += 5) if (Math.random() < 0.3) g.fillRect(0, y, w, 1);
-    g.fillStyle = '#2f5d50'; g.fillRect(0, h * 0.72, w, h * 0.28);
-    g.fillStyle = '#1d3b33'; g.fillRect(0, h * 0.72 - 8, w, 8);
-  });
-  function wall(len, x, z, ry) {
-    const t = wallBase.clone(); t.needsUpdate = true; t.wrapS = THREE.RepeatWrapping; t.repeat.set(len / 2.5, 1);
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(len, 5), new THREE.MeshToonMaterial({ map: t, gradientMap: GRAD }));
+  function wall(len, x, z, ry, name) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(len, 5), img(name));
     m.rotation.y = ry; put(m, x, 1.5, z);
   }
-  wall(16, 0, -12, 0); wall(16, 0, 8, Math.PI); wall(20, -8, -2, Math.PI / 2); wall(20, 8, -2, -Math.PI / 2);
+  wall(16, 0, -12, 0, 'sciana-tyl'); wall(16, 0, 8, Math.PI, 'sciana-przod');
+  wall(20, -8, -2, Math.PI / 2, 'sciana-lewa'); wall(20, 8, -2, -Math.PI / 2, 'sciana-prawa');
   // przyciemnienie przy podłodze i pod sufitem
   for (const [len, x, z, ry] of [[16, 0, -11.99, 0], [16, 0, 7.99, Math.PI], [20, -7.99, -2, Math.PI / 2], [20, 7.99, -2, -Math.PI / 2]]) {
     const lo = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.9), aoMat); lo.rotation.y = ry; put(lo, x, -0.55, z);
@@ -253,25 +247,13 @@ function buildGym() {
   }
   blob(0, 0, 9.5); // ring
   for (const [x, z] of [[-5.2, -6], [-5.2, 0], [5.3, -6], [5.3, 1.5]]) blob(x, z, 1.1);
-  blob(-5.55, 5, 1.3); blob(5.3, 6.8, 2.2, 1.0); blob(3.7, -3.9, 1.1); blob(7.6, 3.7, 1.2, 6.4);
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(16, 20), toonMat(0xd9cba6)); ceil.rotation.x = Math.PI / 2; put(ceil, 0, 4, -2);
-  const tubeMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
-  for (const x of [-4, 0, 4]) for (const z of [-9, -4, 1, 5]) put(new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.06, 0.16), tubeMat), x, 3.95, z);
+  blob(-5.55, 5, 1.3); blob(5.3, 6.8, 2.2, 1.0);
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(16, 20), img('sufit', 3, 4)); ceil.rotation.x = Math.PI / 2; put(ceil, 0, 4, -2);
 
-  // okna, promienie światła i kurz
-  const winTex = canvasTex(256, 208, (g, w, h) => {
-    const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, '#8fd3ff'); gr.addColorStop(1, '#eaf8ff');
-    g.fillStyle = gr; g.fillRect(0, 0, w, h);
-    g.fillStyle = 'rgba(255,255,255,.95)';
-    for (const [cx, cy, r] of [[60, 60, 22], [85, 52, 28], [112, 62, 20], [180, 120, 18], [202, 112, 24]]) { g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill(); }
-    g.strokeStyle = '#5a3b22'; g.lineWidth = 14; g.strokeRect(7, 7, w - 14, h - 14);
-    g.lineWidth = 8; g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
-  });
-  const winMat = new THREE.MeshBasicMaterial({ map: winTex, fog: false });
-  const rayMat = new THREE.MeshBasicMaterial({ color: 0xfff0b8, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
-  for (const z of [-9, -5, -1, 3]) {
-    const w = new THREE.Mesh(new THREE.PlaneGeometry(2, 1.6), winMat); w.rotation.y = Math.PI / 2; put(w, -7.97, 1.9, z);
-    const r = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 1.4), rayMat); r.rotation.z = -0.47; put(r, -5.25, 0.4, z);
+  // promienie słońca z okien namalowanych na lewej ścianie, kurz w powietrzu
+  const rayMat = new THREE.MeshBasicMaterial({ color: 0xfff0b8, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+  for (const z of [5.8, 0.8, -4.2, -9.2]) {
+    const r = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 1.6), rayMat); r.rotation.z = -0.47; put(r, -5.25, 0.6, z);
   }
   const dGeo = new THREE.BufferGeometry(), dPos = new Float32Array(300 * 3);
   for (let i = 0; i < 300; i++) { dPos[i * 3] = -8 + Math.random() * 6; dPos[i * 3 + 1] = -1 + Math.random() * 4; dPos[i * 3 + 2] = -11 + Math.random() * 16; }
@@ -279,54 +261,9 @@ function buildGym() {
   const pts = new THREE.Points(dGeo, new THREE.PointsMaterial({ color: 0xfff3c4, size: 0.03, transparent: true, opacity: 0.7, depthWrite: false }));
   scene.add(pts); dust.push(pts);
 
-  // transparent z nazwą klubu i plakaty
-  const banner = canvasTex(1024, 256, (g, w, h) => {
-    g.fillStyle = '#c8262d'; g.fillRect(0, 0, w, h); g.strokeStyle = '#fff4dc'; g.lineWidth = 8; g.strokeRect(14, 14, w - 28, h - 28);
-    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff4dc';
-    fitFont(g, '翼ボクシングジム', JP, '900', 120, 900); g.fillText('翼ボクシングジム', w / 2, 100);
-    g.fillStyle = '#ffd23f'; fitFont(g, 'TSUBASA BOXING GYM', BANG, '400', 64, 900); g.fillText('TSUBASA BOXING GYM', w / 2, 196);
-  });
-  put(new THREE.Mesh(new THREE.PlaneGeometry(7, 1.75), toonMat(0xffffff, banner)), 0, 3.0, -11.97);
-  function poster(chars, bg, fg) {
-    return canvasTex(256, 384, (g, w, h) => {
-      g.fillStyle = bg; g.fillRect(0, 0, w, h); g.strokeStyle = fg; g.lineWidth = 6; g.strokeRect(12, 12, w - 24, h - 24);
-      g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `900 150px ${JP}`;
-      g.fillText(chars[0], w / 2, 110); g.fillText(chars[1], w / 2, 272);
-    });
-  }
-  put(new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.1), toonMat(0xffffff, poster('根性', '#ffd23f', '#111'))), -5.5, 1.5, -11.97);
-  put(new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.1), toonMat(0xffffff, poster('闘魂', '#c8262d', '#fff4dc'))), 5.5, 1.5, -11.97);
-  const gala = canvasTex(256, 384, (g, w, h) => {
-    g.fillStyle = '#f4e9d0'; g.fillRect(0, 0, w, h); g.fillStyle = '#c8262d'; g.fillRect(0, 0, w, 90);
-    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; fitFont(g, 'FIGHT NIGHT', BANG, '400', 58, 230); g.fillText('FIGHT NIGHT', w / 2, 48);
-    g.fillStyle = '#111'; g.beginPath(); g.arc(80, 190, 50, 0, Math.PI * 2); g.arc(176, 190, 50, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#c8262d'; fitFont(g, 'VS', BANG, '400', 60, 80); g.fillText('VS', w / 2, 190);
-    g.fillStyle = '#111'; fitFont(g, 'FEATHERWEIGHT TITLE', SANS, 'bold', 22, 230); g.fillText('FEATHERWEIGHT TITLE', w / 2, 290);
-    fitFont(g, 'SATURDAY 7 PM', BANG, '400', 44, 230); g.fillText('SATURDAY 7 PM', w / 2, 336);
-  });
-  const galaM = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.8), toonMat(0xffffff, gala)); galaM.rotation.y = Math.PI / 2; put(galaM, -7.97, 1.6, -3);
-  const kon = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.8), toonMat(0xffffff, poster('根性', '#2f5d50', '#fff4dc'))); kon.rotation.y = Math.PI / 2; put(kon, -7.97, 1.6, -7);
-
-  // tablica z planem treningu
-  const board = canvasTex(512, 340, (g, w, h) => {
-    g.fillStyle = '#26433a'; g.fillRect(0, 0, w, h); g.fillStyle = 'rgba(255,255,255,.92)'; g.textBaseline = 'top';
-    g.font = `400 46px ${BANG}`; g.fillText("TODAY'S PLAN", 26, 18);
-    g.font = `bold 30px ${SANS}`;
-    ['• roadwork 10 km', '• jump rope 3 x 3 min', '• heavy bag 6 rounds', '• mitts, 1 round'].forEach((l, i) => g.fillText(l, 30, 90 + i * 44));
-    g.font = `400 38px ${BANG}`; g.fillStyle = '#ffd23f'; g.fillText('NEVER GIVE UP!', 26, 280);
-  });
-  const frame = toon(new THREE.BoxGeometry(0.06, 1.75, 2.55), 0x6b4424, { outline: 0.01 }); put(frame, 7.95, 1.7, -3);
-  const bm = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.6), toonMat(0xffffff, board)); bm.rotation.y = -Math.PI / 2; put(bm, 7.91, 1.7, -3);
-
   // ring
-  const canvasRing = canvasTex(1024, 1024, (g, w, h) => {
-    g.fillStyle = '#d5dde6'; g.fillRect(0, 0, w, h); g.strokeStyle = '#9fb0c4'; g.lineWidth = 10; g.strokeRect(40, 40, w - 80, h - 80);
-    g.fillStyle = '#c3cfdc'; g.beginPath(); g.arc(w / 2, h / 2, 300, 0, Math.PI * 2); g.fill();
-    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = 'rgba(40,60,110,.28)'; g.font = `900 380px ${JP}`; g.fillText('翼', w / 2, h / 2 + 10);
-    g.fillStyle = 'rgba(40,60,110,.35)'; g.font = `400 90px ${BANG}`; g.fillText('TSUBASA', w / 2, 120); g.fillText('TSUBASA', w / 2, h - 120);
-  });
   put(toon(new THREE.BoxGeometry(6.6, 1, 6.6), 0x1f3a6e, { outline: 0.02 }), 0, -0.5, 0);
-  const top = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 6.4), toonMat(0xffffff, canvasRing)); top.rotation.x = -Math.PI / 2; put(top, 0, 0.005, 0);
+  const top = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 6.4), img('mata')); top.rotation.x = -Math.PI / 2; put(top, 0, 0.005, 0);
   const postGeo = new THREE.CylinderGeometry(0.07, 0.07, 1.4, 12), padGeo = new THREE.BoxGeometry(0.2, 1.1, 0.2);
   for (const [x, z, c] of [[-3.1, -3.1, 0xd7263d], [3.1, 3.1, 0x2b59c3], [3.1, -3.1, 0xf4f1e8], [-3.1, 3.1, 0xf4f1e8]]) {
     put(toon(postGeo, 0x9aa0a8), x, 0.7, z); put(toon(padGeo, c, { outline: 0.012 }), x, 0.8, z);
@@ -349,12 +286,10 @@ function buildGym() {
     bags.push({ piv, ph: Math.random() * 6 });
   }
 
-  // gruszka, szafki, opony, ławka, drzwi
+  // gruszka, opony, ławka z hantlami
   put(toon(new THREE.BoxGeometry(1.2, 0.08, 1.0), 0x6b4424), 5.5, 2.3, -11.4);
   put(toon(new THREE.BoxGeometry(0.1, 1.2, 0.1), 0x6b4424), 5.5, 2.9, -11.85);
   const sb = toon(new THREE.SphereGeometry(0.12, 14, 10), 0xb8322a, { outline: 0.01 }); sb.scale.set(1, 1.4, 1); put(sb, 5.5, 2.06, -11.4);
-  const lockerGeo = new THREE.BoxGeometry(0.5, 2, 0.5);
-  for (let z = 1.2; z <= 6.2; z += 0.56) put(toon(lockerGeo, 0x7c93a8, { outline: 0.012 }), 7.7, 0, z);
   const tire = new THREE.TorusGeometry(0.34, 0.13, 10, 20); tire.rotateX(Math.PI / 2);
   put(toon(tire, 0x2a2a2e, { outline: 0.015 }), -5.6, -0.87, 5); put(toon(tire, 0x2a2a2e, { outline: 0.015 }), -5.5, -0.61, 5.05);
   put(toon(new THREE.BoxGeometry(1.6, 0.4, 0.45), 0x6b4424), 5.3, -0.8, 6.8);
@@ -365,7 +300,6 @@ function buildGym() {
     put(toon(dbBar, 0x666666, { outline: 0 }), x, -0.54, 6.8);
     put(toon(dbEnd, 0x222222, { outline: 0.01 }), x - 0.13, -0.54, 6.8); put(toon(dbEnd, 0x222222, { outline: 0.01 }), x + 0.13, -0.54, 6.8);
   }
-  put(toon(new THREE.BoxGeometry(1.3, 2.3, 0.08), 0x7a4a26, { outline: 0.015 }), -4, 0.15, 7.95);
 }
 
 // ---------- trener ----------
@@ -463,6 +397,38 @@ function makeGlove(side) {
   put(pipe, 0, 0, 0.123, g);
   return g;
 }
+
+// Model rękawicy z Meshy (assets/models/rekawica-szkielet.glb). W pliku rękawica leży bokiem:
+// knykcie w -X, mankiet w +X, grzbiet dłoni w +Z, kciuk w +Y. Obrót przekłada to na układ rękawicy
+// z kodu (knykcie -Z, grzbiet +Y, mankiet +Z), co daje lewą; prawa to jej lustro.
+const GLOVE_BASIS = new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0));
+let gloveModel = null;
+const gloveSlots = [];
+function modelGlove(side) {
+  const inner = gloveModel.clone(true);
+  const box = new THREE.Box3().setFromObject(inner), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  inner.position.sub(c);
+  const holder = new THREE.Group(); holder.add(inner);
+  holder.quaternion.setFromRotationMatrix(GLOVE_BASIS);
+  holder.scale.setScalar(0.3 / Math.max(size.x, size.y, size.z));
+  const g = new THREE.Group(); g.add(holder);
+  if (side === 'R') g.scale.x = -1;
+  return g;
+}
+// Podmienia rękawicę z kodu na model, gdy tylko się wczyta. slot: { parent, side, get(), set(g) }
+function swapGlove(slot) {
+  if (!gloveModel || !slot.get()) return;
+  const old = slot.get(), g = modelGlove(slot.side);
+  g.position.copy(old.position); g.quaternion.copy(old.quaternion); g.userData = old.userData; g.visible = old.visible;
+  old.parent.add(g); old.parent.remove(old); slot.set(g);
+}
+new GLTFLoader().load('assets/models/rekawica-szkielet.glb', (gltf) => {
+  const dim = new THREE.Box3().setFromObject(gltf.scene).getSize(new THREE.Vector3()), maxDim = Math.max(dim.x, dim.y, dim.z);
+  const meshes = []; gltf.scene.traverse(o => { if (o.isMesh) meshes.push(o); });
+  for (const o of meshes) { o.material = new THREE.MeshToonMaterial({ map: o.material.map, gradientMap: GRAD }); o.add(outlineOf(o.geometry, 0.004 * maxDim / 0.3)); }
+  gloveModel = gltf.scene;
+  for (const slot of gloveSlots) swapGlove(slot);
+});
 
 // ---------- dźwięk syntetyczny ----------
 let actx = null, master, noiseBuf;
@@ -635,7 +601,7 @@ const bigText = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex('3'), t
 bigText.renderOrder = 15; bigText.visible = false; scene.add(bigText);
 
 const bestOf = { combo: 0, defense: 0 };
-try { bestOf.combo = +localStorage.getItem('tsubasa-best') || 0; bestOf.defense = +localStorage.getItem('tsubasa-best-def') || 0; } catch (e) { /* bez zapisu */ }
+try { bestOf.combo = +localStorage.getItem('ana-best') || 0; bestOf.defense = +localStorage.getItem('ana-best-def') || 0; } catch (e) { /* bez zapisu */ }
 function hearts(g, x, y, n, of) {
   for (let i = 0; i < of; i++) {
     const cx = x + (i - (of - 1) / 2) * 62;
@@ -652,7 +618,7 @@ function drawHUD() {
   g.beginPath(); g.roundRect(6, 6, w - 12, h - 12, 28); g.fill(); g.stroke();
   g.textAlign = 'center'; g.textBaseline = 'middle';
   if (state === 'menu') {
-    g.fillStyle = '#ffd23f'; g.font = `400 120px ${BANG}`; g.fillText('RING TSUBASA', w / 2, 120);
+    g.fillStyle = '#ffd23f'; g.font = `400 120px ${BANG}`; g.fillText('ANA BOXING GYM', w / 2, 120);
     g.fillStyle = '#fff4dc'; g.font = `bold 44px ${SANS}`; g.fillText(vr ? 'Punch a target to pick a mode' : 'Pick a mode in the panel on the left', w / 2, 236);
   } else if (state === 'end' && mode === 'defense') {
     g.fillStyle = '#ff5a4a'; g.font = `400 88px ${BANG}`; g.fillText('KNOCKED OUT', w / 2, 70);
@@ -732,7 +698,7 @@ function updateCountdown() {
 function endRound() {
   state = 'end'; bell(actx.currentTime, 3); menuArmAt = nowS() + 1.2;
   if (!renderer.xr.isPresenting) document.getElementById('info').style.display = '';
-  const key = mode === 'defense' ? 'tsubasa-best-def' : 'tsubasa-best';
+  const key = mode === 'defense' ? 'ana-best-def' : 'ana-best';
   const rec = score > bestOf[mode];
   if (rec) { bestOf[mode] = score; try { localStorage.setItem(key, String(score)); } catch (e) { /* bez zapisu */ } }
   if (mode === 'defense') {
@@ -991,11 +957,11 @@ const menuPads = [];
 let menuArmAt = 0;
 function buildMenu() {
   const geo = new THREE.CylinderGeometry(0.17, 0.17, 0.08, 28); geo.rotateX(Math.PI / 2);
-  for (const [m, label, col, x] of [['combo', 'COMBOS', 0xffd23f, -0.3], ['defense', "DON'T GET HIT", 0x7dff8a, 0.3]]) {
+  for (const [m, label, col, x] of [['combo', 'COMBOS', 0xffd23f, -0.28], ['defense', "DON'T GET HIT", 0x7dff8a, 0.28]]) {
     const g = new THREE.Group();
     g.add(toon(geo, col, { outline: 0.018 }));
     const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex(label, '#fff'), transparent: true, depthTest: false, fog: false }));
-    lab.scale.set(0.56, 0.28, 1); lab.position.set(0, 0.3, 0); lab.renderOrder = 12; g.add(lab);
+    lab.scale.set(0.34, 0.17, 1); lab.position.set(0, 0.26, 0); lab.renderOrder = 12; g.add(lab);
     g.userData = { mode: m, x }; g.visible = false; scene.add(g); menuPads.push(g);
   }
 }
@@ -1007,7 +973,7 @@ function updateMenu(dt) {
     const k = Math.min(1, dt * 3);
     g.position.x += (head.x + g.userData.x - g.position.x) * k;
     g.position.y += (head.y - 0.12 - g.position.y) * k;
-    g.position.z += (head.z - 0.55 - g.position.z) * k;
+    g.position.z += (head.z - 0.75 - g.position.z) * k;
     g.scale.setScalar(nowS() < menuArmAt ? 0.6 : 1);
   }
   if (!show || nowS() < menuArmAt) return;
@@ -1037,10 +1003,12 @@ for (let i = 0; i < 2; i++) {
     h.side = e.data.handedness === 'left' ? 'L' : 'R'; h.src = e.data; h.has = true; h.fresh = true;
     if (h.glove) grip.remove(h.glove);
     h.glove = makeGlove(h.side); h.glove.quaternion.copy(GRIP_FIX[h.side]); grip.add(h.glove);
+    swapGlove({ side: h.side, get: () => h.glove, set: g => { h.glove = g; } });
   });
   grip.addEventListener('disconnected', () => { h.has = false; if (h.glove) { grip.remove(h.glove); h.glove = null; } });
   ctrl.addEventListener('selectstart', () => { if ((state === 'menu' || state === 'end') && nowS() >= menuArmAt) startCountdown(lastMode); });
   hands.push(h);
+  gloveSlots.push({ get side() { return h.side; }, get: () => h.glove, set: g => { h.glove = g; } });
 }
 function updateHands(dt) {
   for (const h of hands) {
@@ -1077,6 +1045,7 @@ renderer.xr.addEventListener('sessionend', () => {
 const deskGloves = [makeGlove('L'), makeGlove('R')];
 const GLOVE_REST = [new THREE.Vector3(-0.26, -0.3, -0.62), new THREE.Vector3(0.26, -0.3, -0.62)];
 deskGloves.forEach((g, i) => { g.position.copy(GLOVE_REST[i]); g.rotation.set(0.9, i ? -0.25 : 0.25, 0); g.userData.p = 0; camera.add(g); });
+deskGloves.forEach((g, i) => gloveSlots.push({ side: i ? 'R' : 'L', get: () => deskGloves[i], set: ng => { deskGloves[i] = ng; } }));
 const keys = new Set();
 addEventListener('keydown', e => keys.add(e.key.toLowerCase()));
 addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
@@ -1118,7 +1087,7 @@ function updateDesktop(dt) {
 }
 
 // ---------- pętla ----------
-buildGym(); buildTrainer(); buildRival(); showRival(false); buildMenu(); trainerSay('Welcome to Tsubasa Gym!', true); drawHUD();
+buildGym(); buildTrainer(); buildRival(); showRival(false); buildMenu(); trainerSay('Welcome to ANA Boxing Gym!', true); drawHUD();
 const clock = new THREE.Clock();
 function frame(dt, draw = true) {
   const now = nowS();
