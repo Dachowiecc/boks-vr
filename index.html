@@ -1795,9 +1795,8 @@ async function loadRival() {
   rival.add(root);
   rm.acts.mx_idle_stance.play(); rm.cur = 'mx_idle_stance';
   loadRivalGloves();
-  rm.ready = true;
-  // bryły zastępcze chowamy, zostają niewidoczne kule rękawic jako punkty do testów
-  for (const ch of [...rival.children]) if (ch !== root) ch.visible = false;
+  // model wchodzi dopiero między rundami (updateLateModels), żeby nie podmieniać rywala w trakcie ciosu
+  rm.pending = true; root.visible = false;
 }
 function loadRivalGloves() {
   new GLTFLoader().load('assets/models/rekawica-biala.glb', (gltf) => {
@@ -2134,7 +2133,7 @@ async function loadCoach() {
   }
   coach.add(root); cm.root = root;
   await loadMitts();
-  cm.ready = true;
+  cm.pending = true;
 }
 async function loadMitts() {
   const gltf = await new GLTFLoader().loadAsync('assets/models/lapa.glb');
@@ -2191,7 +2190,16 @@ function placeCoach() {
 // ręka trenera dla tarczy gracza: lewa ręka gracza bije w prawą łapę trenera (stoją twarzą w twarz)
 const coachHand = playerHand => (playerHand === 'L' ? 'R' : 'L');
 const mTmp = new THREE.Vector3(), mRest = { L: new THREE.Vector3(), R: new THREE.Vector3() }, mTarget = { L: new THREE.Vector3(), R: new THREE.Vector3() }, mFace = { L: new THREE.Vector3(), R: new THREE.Vector3() };
+function updateLateModels() {
+  const busy = state === 'fight' || state === 'countdown';
+  if (rm.pending && !(busy && mode === 'defense')) {
+    rm.pending = false; rm.ready = true; rm.root.visible = true;
+    for (const ch of [...rival.children]) if (ch !== rm.root) ch.visible = false;
+  }
+  if (cm.pending && !(busy && mode === 'combo')) { cm.pending = false; cm.ready = true; }
+}
 function updateCoach(dt) {
+  updateLateModels();
   coach.visible = coachOn();
   for (const s of ['L', 'R']) if (cm.mitts[s]) cm.mitts[s].visible = coach.visible;
   for (const ch of trainer.children) if (ch !== bubbleSprite) ch.visible = !coach.visible;
