@@ -909,7 +909,8 @@ function buildRival() {
 function placeRival() {
   const sc = (base.y + 0.06) / 1.72;
   rival.scale.setScalar(sc);
-  rival.position.set(base.x, 0, base.z - 1.25);
+  rival.position.set(base.x, 0, base.z - (rm.ready ? RDIST : 1.25));
+  if (rm.ready) { rival.scale.setScalar(Math.min(1.08, Math.max(0.9, (base.y + 0.12) / 1.7))); fitRivalGloves(); }
   rival.rotation.set(0, 0, 0);
 }
 function setArm(m, a, b) {
@@ -928,7 +929,7 @@ glint.visible = false; glint.renderOrder = 9; scene.add(glint);
 const hitFlash = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2), new THREE.MeshBasicMaterial({ color: 0xff2a1a, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false }));
 hitFlash.renderOrder = 21; hitFlash.position.set(0, 0, -0.3); hitFlash.visible = false; camera.add(hitFlash);
 let flashT = 0;
-function clearPunches() { punches.length = 0; glint.visible = false; }
+function clearPunches() { punches.length = 0; glint.visible = false; if (rm.ready) { rm.stepTo = 0; rIdle(0.2); } }
 function throwPunch(kind) {
   const k = PKIND[kind], now = aNow();
   const S = rWorld(RGUARD[k.hand]);
@@ -964,6 +965,7 @@ function resolvePunch(p, res, gl) {
   if (lives <= 0) endRound();
 }
 function updateDefense(dt) {
+  if (rm.ready) return updateDefenseM(dt);
   const now = aNow();
   // rywal kołysze się w rytmie
   rival.position.x = base.x + Math.sin(now * 2.1) * 0.06;
@@ -1007,9 +1009,10 @@ function updateDefense(dt) {
   }
 }
 function updateRivalIdle() {
+  if (rm.ready) return;
   for (const s of ['L', 'R']) { rGloves[s].position.copy(rWorld(RGUARD[s])); setArm(rArms[s], rWorld(RSH[s]), rGloves[s].position); }
 }
-function showRival(v) { rival.visible = v; for (const s of ['L', 'R']) { rGloves[s].visible = v; rArms[s].visible = v; } }
+function showRival(v) { rival.visible = v; for (const s of ['L', 'R']) { rGloves[s].visible = v && !rm.ready; rArms[s].visible = v && !rm.ready; } }
 
 // ---------- tryb BALL MACHINE: maszyna strzela piłkami, gracz robi uniki i kontruje ----------
 // Żółta piłka leci w głowę: slip w bok albo zejście w dół. Czerwona leci na wysokość klatki: uderz ją.
@@ -1630,6 +1633,186 @@ function deskBagPunch(side) {
   bagHit(side, PUNCH_DIR[key].clone().multiplyScalar(5 + Math.random() * 2), pos, null);
 }
 
+// ---------- rywal z Meshy + ciosy z Mixamo (tryb Don't Get Hit) ----------
+// Model ma szkielet Mixamo, klipy są z Mixamo (FBX bez skóry). Moment trafienia i zasięg każdego klipu zmierzone
+// w test/anim-podglad.html (__impact). Ramię jest docelowane w głowę gracza jedną kością (korekta kierunku barku),
+// a trafienie i blok liczą się z pozycji prawdziwej dłoni modelu, czyli gracz unika tego, co widzi.
+const RCLIP = {
+  jab: { file: 'mx_jab', hand: 'L', ti: 0.477, reach: 1.28 },
+  cross: { file: 'mx_cross', hand: 'R', ti: 0.676, reach: 1.28 },
+  hookL: { file: 'mx_hook_l', hand: 'L', ti: 0.5, reach: 0.88 },
+  hookR: { file: 'mx_hook_r', hand: 'R', ti: 0.776, reach: 0.95 },
+  upperL: { file: 'mx_upper_l', hand: 'L', ti: 0.88, reach: 0.945 },
+  upperR: { file: 'mx_upper_r', hand: 'R', ti: 0.715, reach: 0.99 },
+};
+const RIDLE = ['mx_idle_stance', 'mx_hit_head_l', 'mx_hit_head_r', 'mx_taunt', 'mx_victory'];
+const RDIST = 1.22;
+const rm = { ready: false, root: null, mixer: null, acts: {}, bones: {}, cur: null, stepZ: 0, stepTo: 0, aim: { L: 0, R: 0 }, target: new THREE.Vector3() };
+async function loadRival() {
+  const { FBXLoader } = await import('three/addons/loaders/FBXLoader.js');
+  const gltf = await new GLTFLoader().loadAsync('assets/models/rywal.glb');
+  const root = gltf.scene, hips = root.getObjectByName('mixamorigHips');
+  const meshes = []; root.traverse(o => { if (o.isMesh) { meshes.push(o); o.frustumCulled = false; } });
+  for (const o of meshes) o.material = new THREE.MeshToonMaterial({ map: o.material.map, gradientMap: GRAD });
+  const mixer = new THREE.AnimationMixer(root);
+  const fl = new FBXLoader(), files = [...new Set([...Object.values(RCLIP).map(c => c.file), ...RIDLE])];
+  const clips = {};
+  await Promise.all(files.map(async f => {
+    const fbx = await fl.loadAsync(`assets/anim/${f}.fbx`), clip = fbx.animations[0];
+    const ht = clip.tracks.find(t => t.name === 'mixamorigHips.position'), sc = ht ? hips.position.y / ht.values[1] : 0.01;
+    for (const t of clip.tracks) if (t.name.endsWith('.position')) for (let i = 0; i < t.values.length; i++) t.values[i] *= sc;
+    clip.name = f; clips[f] = clip;
+  }));
+  for (const [f, clip] of Object.entries(clips)) {
+    const a = mixer.clipAction(clip);
+    if (f !== 'mx_idle_stance') { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
+    rm.acts[f] = a;
+  }
+  for (const s of ['L', 'R']) {
+    const n = s === 'L' ? 'Left' : 'Right';
+    rm.bones[s] = { arm: root.getObjectByName(`mixamorig${n}Arm`), hand: root.getObjectByName(`mixamorig${n}Hand`), fore: root.getObjectByName(`mixamorig${n}ForeArm`) };
+    // szkielet z Meshy nie ma kości palców: otwartą dłoń zwijamy do zera, rękawica siedzi na przedramieniu w miejscu nadgarstka
+    rm.bones[s].hand.scale.setScalar(0.001);
+  }
+  rm.root = root; rm.mixer = mixer; rm.meshes = meshes;
+  rival.add(root);
+  rm.acts.mx_idle_stance.play(); rm.cur = 'mx_idle_stance';
+  loadRivalGloves();
+  rm.ready = true;
+  // bryły zastępcze chowamy, zostają niewidoczne kule rękawic jako punkty do testów
+  for (const ch of [...rival.children]) if (ch !== root) ch.visible = false;
+}
+function loadRivalGloves() {
+  new GLTFLoader().load('assets/models/rekawica-biala.glb', (gltf) => {
+    const src = gltf.scene;
+    src.traverse(o => { if (o.isMesh) o.material = new THREE.MeshToonMaterial({ map: o.material.map, color: 0xffffff, gradientMap: GRAD }); });
+    const box = new THREE.Box3().setFromObject(src), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+    for (const s of ['L', 'R']) {
+      const g = src.clone(true), holder = new THREE.Group(), inner = new THREE.Group();
+      g.position.sub(c); inner.add(g);
+      // układ rękawicy z pliku -> przedramię Mixamo (+Y wzdłuż ręki); lewa i prawa dobrane na zrzutach (test/anim-podglad.html, __glove)
+      const B = [new THREE.Vector3(0, -1, 0), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1)];
+      if (s === 'R') for (const v of B) v.x *= -1;
+      inner.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(...B));
+      inner.scale.x = -1;
+      holder.add(inner); holder.userData.size = Math.max(size.x, size.y, size.z);
+      const wrist = new THREE.Group(); wrist.position.copy(rm.bones[s].hand.position); rm.bones[s].fore.add(wrist); wrist.add(holder);
+      rm.bones[s].glove = holder; rm.bones[s].wrist = wrist;
+    }
+    fitRivalGloves();
+  });
+}
+function fitRivalGloves() {
+  for (const s of ['L', 'R']) {
+    const h = rm.bones[s].glove; if (!h) continue;
+    const ws = rm.bones[s].wrist.getWorldScale(new THREE.Vector3()).x;
+    h.scale.setScalar(0.26 / h.userData.size / ws);
+    h.position.set(0, 0.06 / ws, 0);
+  }
+}
+function rPlay(name, fade = 0.12, ts = 1) {
+  const a = rm.acts[name]; if (!a) return;
+  const prev = rm.acts[rm.cur];
+  a.reset(); a.setEffectiveTimeScale(ts); a.setEffectiveWeight(1); a.play();
+  if (prev && prev !== a) prev.crossFadeTo(a, fade, false);
+  rm.cur = name;
+}
+function rIdle(fade = 0.25) {
+  if (rm.cur === 'mx_idle_stance') return;
+  const a = rm.acts.mx_idle_stance; a.reset(); a.play(); rm.acts[rm.cur].crossFadeTo(a, fade, false); rm.cur = 'mx_idle_stance';
+}
+const aV1 = new THREE.Vector3(), aV2 = new THREE.Vector3(), aV3 = new THREE.Vector3(), aQ = new THREE.Quaternion(), aQ2 = new THREE.Quaternion(), aQ3 = new THREE.Quaternion(), aQI = new THREE.Quaternion();
+// korekta: obróć ramię (kość barku) tak, żeby dłoń szła w cel; w = 0..1
+function aimArm(s, target, w) {
+  if (w <= 0.001) return;
+  const { arm, hand } = rm.bones[s];
+  arm.getWorldPosition(aV1); hand.getWorldPosition(aV2);
+  aV2.sub(aV1).normalize(); aV3.subVectors(target, aV1).normalize();
+  aQ.setFromUnitVectors(aV2, aV3); aQ2.copy(aQI).slerp(aQ, w);
+  arm.getWorldQuaternion(aQ3); aQ3.premultiply(aQ2);
+  arm.parent.getWorldQuaternion(aQ); arm.quaternion.copy(aQ.invert().multiply(aQ3));
+  arm.updateMatrixWorld(true);
+}
+function rHandWorld(s, out) { return (rm.bones[s].glove || rm.bones[s].hand).getWorldPosition(out); }
+function throwPunchM(kind) {
+  const c = RCLIP[kind], now = aNow();
+  // tempo: na początku trybu cios jest wolny (zwolnione tempo), potem coraz szybszy
+  const want = windDur() + punchDur(), ts = Math.max(0.3, Math.min(1.5, c.ti / want));
+  const tImpact = now + c.ti / ts;
+  const E = head.clone();
+  punches.push({ kind, hand: c.hand, E, t0: now, tImpact, ts, phase: 'fly', res: null, model: true, double: false });
+  rm.stepTo = Math.max(0, RDIST - c.reach + 0.02);
+  rPlay(c.file, 0.1, ts);
+  thrown++;
+}
+function updateRivalModel(dt) {
+  if (!rm.ready) return;
+  const now = aNow();
+  // krok do przodu przy krótkich ciosach i powrót
+  rm.stepZ += (rm.stepTo - rm.stepZ) * Math.min(1, dt * 7);
+  rm.root.position.z = rm.stepZ / rival.scale.x;
+  rm.mixer.update(dt);
+  rm.root.updateMatrixWorld(true);
+  // docelowanie ramienia w chwili ciosu
+  for (const p of punches) {
+    if (!p.model) continue;
+    const c = RCLIP[p.kind], total = c.ti / p.ts, u = 1 - (p.tImpact - now) / total;
+    let w = p.phase === 'fly' ? Math.max(0, Math.min(1, (u - 0.25) / 0.6)) : Math.max(0, 1 - (now - p.tBack) / 0.25);
+    w = w * w * (3 - 2 * w);
+    aimArm(p.hand, p.E, w * (p.res === 'block' ? 0.4 : 1));
+  }
+  // niewidoczne kule rękawic śledzą prawdziwe dłonie (blok i testy)
+  for (const s of ['L', 'R']) rHandWorld(s, rGloves[s].position);
+}
+function updateDefenseM(dt) {
+  const now = aNow();
+  rival.position.x = base.x + Math.sin(now * 1.1) * 0.04;
+  if (now >= nextPunchAt && punches.length === 0) {
+    const pool = thrown < 6 ? ['jab', 'cross'] : thrown < 16 ? ['jab', 'cross', 'hookL', 'hookR'] : ['jab', 'cross', 'hookL', 'hookR', 'upperL', 'upperR'];
+    throwPunchM(pick(pool));
+    if (thrown > 12 && Math.random() < 0.35) punches[punches.length - 1].double = true;
+    nextPunchAt = Infinity;
+  }
+  glint.visible = false;
+  for (let i = punches.length - 1; i >= 0; i--) {
+    const p = punches[i];
+    const hp = rGloves[p.hand].position;
+    if (p.phase === 'fly') {
+      const total = RCLIP[p.kind].ti / p.ts, u = 1 - (p.tImpact - now) / total;
+      // błysk nad rękawicą na starcie ciosu: sygnał, która ręka idzie
+      if (u < 0.35) { glint.visible = true; glint.position.copy(hp).add(tmpB.set(0, 0.14, 0)); const sc = 0.14 + 0.08 * Math.sin(u / 0.35 * Math.PI); glint.scale.set(sc, sc, 1); }
+      if (u > 0.4) for (const gl of playerGloves()) if (gl.pos.distanceTo(hp) < 0.2) { resolvePunchM(p, 'block', gl); break; }
+      if (p.phase === 'fly' && now >= p.tImpact) resolvePunchM(p, head.distanceTo(hp) < 0.2 ? 'hit' : 'dodge');
+    } else if (now - p.tBack > 0.45) {
+      punches.splice(i, 1); rm.stepTo = 0;
+      if (state !== 'fight') continue;
+      if (p.double) throwPunchM(pick(p.hand === 'L' ? ['cross', 'hookR', 'upperR'] : ['jab', 'hookL', 'upperL']));
+      else { rIdle(); nextPunchAt = now + gapDur() * 0.8; }
+    }
+  }
+}
+function resolvePunchM(p, res, gl) {
+  p.res = res; p.phase = 'back'; p.tBack = aNow();
+  // powrót ręki przyspiesza, żeby następny cios nie czekał na koniec długiego klipu
+  const a = rm.acts[RCLIP[p.kind].file]; if (a) a.setEffectiveTimeScale(Math.max(p.ts, 1.3));
+  const at = new THREE.Vector3(head.x, head.y + 0.15, head.z - 0.7);
+  if (res === 'block') {
+    blocked++; score += 50 + 5 * thrown; popWord('BLOCK!', at, '#7dd3ff', 1.1); sfxHit(2);
+    if (gl && gl.h) buzz(gl.h, 0.7, 70);
+  } else if (res === 'dodge') {
+    dodged++; score += 100 + 10 * thrown; popWord(pick(['SLIP!', 'DODGE!', 'NICE!']), at, '#7dff8a', 1.1); sfxWhoosh();
+    popWord('+' + (100 + 10 * thrown), new THREE.Vector3(head.x + 0.2, head.y - 0.05, head.z - 0.6), '#7dff8a', 0.5, 0.7, new THREE.Vector3(0, 0.3, 0));
+  } else {
+    taken++; lives--; popWord(pick(['OUCH!', 'BAM!', 'ドン!']), at, '#ff5a4a', 1.5); sfxOuch(); sfxHit(5);
+    flashT = 0.35; hitFlash.visible = true;
+    for (const h of hands) if (h.has) buzz(h, 1, 140);
+    trainerSay(pick(['Hands up!', 'Move your head!', 'Watch his shoulders!']));
+  }
+  hudDirty = true;
+  if (lives <= 0) { endRound(); rPlay('mx_victory', 0.3); }
+}
+loadRival().catch(e => console.warn('rywal z modelu niedostępny, zostaje rywal z brył', e));
+
 // ---------- menu w VR: uderz tarczę, żeby wybrać tryb ----------
 const menuPads = [];
 let menuArmAt = 0;
@@ -1786,6 +1969,7 @@ function frame(dt, draw = true) {
   if (state === 'countdown') updateCountdown();
   updateMenu(dt);
   showRival(mode === 'defense' && state !== 'menu');
+  if (mode === 'defense' && state !== 'menu') updateRivalModel(dt);
   if (mode === 'defense' && (state === 'countdown' || state === 'end')) { if (state === 'countdown') placeRival(); updateRivalIdle(); }
   bm.visible = mode === 'balls' && state !== 'menu'; placeHUD();
   slowVig.visible = slowT > 0 && mode === 'balls'; if (slowVig.visible) slowVig.material.opacity = Math.min(1, slowT / 0.15) * 0.55;
