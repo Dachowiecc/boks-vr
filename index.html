@@ -38,6 +38,8 @@
   <div><b>Full Workout:</b> all five drills in a row with short rests, like a real class. Endless drills stop after 60 seconds.</div>
   <div class="prof"><b>Players:</b> <input id="name1" maxlength="12" placeholder="PLAYER 1"> <input id="name2" maxlength="12" placeholder="PLAYER 2">
     <button id="p1">PLAY AS 1</button> <button id="p2">PLAY AS 2</button> <span id="pnow"></span></div>
+  <div class="prof"><b>Own trainer:</b> <input type="file" id="coachFile" accept=".glb"> <button id="coachReset">DEFAULT TRAINER</button> <span id="coachNow"></span>
+    <br><small>Rigged GLB with a Mixamo skeleton. It stays in this browser only and is never uploaded.</small></div>
   <div><b>Desktop:</b> left / right mouse button or F / J for left / right hand (hold to block in Don't Get Hit). C to duck, A / D to slip.</div>
   <button id="start">COMBOS</button> <button id="startBalls">BALL MACHINE</button> <button id="startBag">POWER BAG</button> <button id="startLine">SLIP LINE</button> <button id="startWorkout">FULL WORKOUT</button> <button id="startDef">DON'T GET HIT</button>
   <div id="err"></div>
@@ -2126,12 +2128,25 @@ function checkGate(a) {
 const COACH_DIST = 1.0;
 const coach = new THREE.Group(); coach.visible = false; scene.add(coach);
 const cm = { ready: false, root: null, mixer: null, bones: {}, mitts: {}, marks: {}, stepZ: 0, stepTo: 0, rec: { L: new THREE.Vector3(), R: new THREE.Vector3() }, from: 'none' };
+// własny model trenera z pliku: zostaje w pamięci przeglądarki na tym urządzeniu (IndexedDB), nigdzie nie jest wysyłany
+function coachDB() {
+  return new Promise((ok, bad) => { const r = indexedDB.open('ana-gym', 1); r.onupgradeneeded = () => r.result.createObjectStore('files'); r.onsuccess = () => ok(r.result); r.onerror = () => bad(r.error); });
+}
+async function coachFileGet() {
+  try { const db = await coachDB(); return await new Promise(ok => { const q = db.transaction('files').objectStore('files').get('coach'); q.onsuccess = () => ok(q.result || null); q.onerror = () => ok(null); }); } catch (e) { return null; }
+}
+async function coachFileSet(buf) {
+  const db = await coachDB();
+  await new Promise((ok, bad) => { const tx = db.transaction('files', 'readwrite'); buf ? tx.objectStore('files').put(buf, 'coach') : tx.objectStore('files').delete('coach'); tx.oncomplete = ok; tx.onerror = () => bad(tx.error); });
+}
 async function loadCoach() {
   const { FBXLoader } = await import('three/addons/loaders/FBXLoader.js');
   let gltf = null;
   // trenerka tylko wtedy, gdy plik jest na serwerze; publicznie stoi trener zastępczy
   const force = new URLSearchParams(location.search).get('coach');
-  for (const f of force ? [force] : ['trenerka', 'trener']) { try { gltf = await new GLTFLoader().loadAsync(`assets/models/${f}.glb`); cm.from = f; break; } catch (e) { /* następny */ } }
+  const own = force ? null : await coachFileGet();
+  if (own) { try { gltf = await new GLTFLoader().parseAsync(own, ''); cm.from = 'own'; } catch (e) { gltf = null; } }
+  if (!gltf) for (const f of force ? [force] : ['trenerka', 'trener']) { try { gltf = await new GLTFLoader().loadAsync(`assets/models/${f}.glb`); cm.from = f; break; } catch (e) { /* następny */ } }
   if (!gltf) return;
   const root = gltf.scene, hips = root.getObjectByName('mixamorigHips');
   root.traverse(o => { if (o.isMesh) { o.frustumCulled = false; o.material = new THREE.MeshToonMaterial({ map: o.material.map, gradientMap: GRAD }); } });
@@ -2501,6 +2516,14 @@ for (const n of [1, 2]) {
   inp.addEventListener('input', () => { store.set('ana-name-' + n, inp.value.trim()); refreshProfilePads(); drawHUD(); showProfile(); });
   document.getElementById('p' + n).addEventListener('click', () => { setProfile(n); showProfile(); });
 }
+document.getElementById('coachFile').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const buf = await f.arrayBuffer();
+  try { await coachFileSet(buf); document.getElementById('coachNow').textContent = 'saved, reloading...'; setTimeout(() => location.reload(), 600); }
+  catch (err) { document.getElementById('coachNow').textContent = 'could not save: ' + err.message; }
+});
+document.getElementById('coachReset').addEventListener('click', async () => { try { await coachFileSet(null); } catch (e) { /* brak bazy */ } location.reload(); });
+coachFileGet().then(b => { document.getElementById('coachNow').textContent = b ? 'using your own trainer' : ''; });
 function showProfile() { document.getElementById('pnow').textContent = 'now: ' + playerName(profile); }
 showProfile();
 function updateDesktop(dt) {
@@ -2565,7 +2588,7 @@ renderer.setAnimationLoop(() => {
   if (!manualFrames) frame(dt);
 });
 window.__game = { get state() { return state; }, get score() { return score; }, get combo() { return combo; }, get active() { return active.length; }, list: active, camera, startCountdown, frame,
-  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken, level: bLevel, ball: { ...BS }, bag: { ...BG } }), punches, menuPads, rGloves, makeGlove, scene, balls, BS, get level() { return bLevel; }, get lives() { return lives; }, get slow() { return slowT; }, bm, bmMuzzle, placeMachine, BG, zoneMarks, get bagKey() { return bagCurCombo ? bagCurCombo.keys[bagCallIdx] : null; }, get flurry() { return bagFlurry; }, bagRoot, get gates() { return { ok: gatesOk, seen: gatesSeen }; }, counterTgt, get counters() { return counters; }, get workout() { return workout; }, startWorkout };
+  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken, level: bLevel, ball: { ...BS }, bag: { ...BG } }), punches, menuPads, rGloves, makeGlove, scene, balls, BS, get level() { return bLevel; }, get lives() { return lives; }, get slow() { return slowT; }, bm, bmMuzzle, placeMachine, BG, zoneMarks, get bagKey() { return bagCurCombo ? bagCurCombo.keys[bagCallIdx] : null; }, get flurry() { return bagFlurry; }, bagRoot, get gates() { return { ok: gatesOk, seen: gatesSeen }; }, counterTgt, get counters() { return counters; }, get workout() { return workout; }, startWorkout, get coachFrom() { return cm.from; }, coachFileSet };
 </script>
 </body>
 </html>
