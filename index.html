@@ -427,8 +427,12 @@ function makeGlove(side) {
 const GLOVE_BASIS = new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0));
 let gloveModel = null;
 const gloveSlots = [];
+const GLOVE_TINT = { L: 0x5a0e08, R: 0x0a2a66 };
 function modelGlove(side) {
   const inner = gloveModel.clone(true);
+  // czerń rękawicy podbarwiona kolorem ręki (lewa czerwona, prawa niebieska), nadruk kości zostaje biały
+  const tint = GLOVE_TINT[side];
+  inner.traverse(o => { if (o.isMesh && o.material !== OUTLINE) { o.material = o.material.clone(); o.material.emissive = new THREE.Color(tint); o.material.emissiveIntensity = 1; } });
   const box = new THREE.Box3().setFromObject(inner), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
   inner.position.sub(c);
   const holder = new THREE.Group(); holder.add(inner);
