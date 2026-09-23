@@ -687,7 +687,7 @@ function drawHUD() {
   } else if (state === 'end' && mode === 'defense') {
     g.fillStyle = '#ff5a4a'; g.font = `400 88px ${BANG}`; g.fillText('KNOCKED OUT', w / 2, 70);
     g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`;
-    g.fillText(`Survived ${thrown - taken} of ${thrown} punches · Slipped ${dodged} · Blocked ${blocked}`, w / 2, 160);
+    g.fillText(`Survived ${thrown - taken} of ${thrown} · Slipped ${dodged} · Blocked ${blocked} · Counters ${counters}`, w / 2, 160);
     g.fillText(`Score ${score} · Best ${bestOf.defense}`, w / 2, 212);
     g.fillStyle = '#ffd23f'; g.fillText(vr ? 'Punch a target to go again' : 'Pick a mode to go again', w / 2, 272);
   } else if (state === 'end') {
@@ -722,7 +722,7 @@ function drawHUD() {
     g.fillStyle = '#ffd23f'; g.font = `400 110px ${BANG}`;
     g.fillText(String(score), 180, 170); g.fillText('x' + (1.7 / punchDur()).toFixed(1), w - 180, 170);
     hearts(g, w / 2, 165, lives, 5);
-    g.fillStyle = '#fff4dc'; g.font = `bold 32px ${SANS}`; g.fillText(`Slipped ${dodged} · Blocked ${blocked} · Hit ${taken}`, w / 2, 262);
+    g.fillStyle = '#fff4dc'; g.font = `bold 32px ${SANS}`; g.fillText(`Slipped ${dodged} · Blocked ${blocked} · Counters ${counters} · Hit ${taken}`, w / 2, 262);
   } else {
     const left = Math.max(0, Math.ceil(ROUND_BARS * 4 * BEAT - (state === 'fight' ? songTime() : 0)));
     g.fillStyle = '#fff4dc'; g.font = `bold 34px ${SANS}`;
@@ -760,7 +760,7 @@ function startCountdown(m = lastMode) {
   clearPunches();
   mode = m; lastMode = m;
   score = combo = maxCombo = hits = misses = padsSeen = dodgeOk = dodgeSeen = 0;
-  lives = 5; thrown = dodged = blocked = taken = 0; comboName = comboWords = ''; gatesOk = gatesSeen = gateChain = 0;
+  lives = 5; thrown = dodged = blocked = taken = 0; counters = 0; counterTgt.visible = false; comboName = comboWords = ''; gatesOk = gatesSeen = gateChain = 0;
   rival.visible = mode === 'defense';
   if (mode === 'balls') resetBalls();
   if (mode === 'bag') resetBag();
@@ -1801,6 +1801,37 @@ function aimArm(s, target, w) {
   arm.updateMatrixWorld(true);
 }
 function rHandWorld(s, out) { return (rm.bones[s].glove || rm.bones[s].hand).getWorldPosition(out); }
+// kontra po uniku: przez chwilę wisi cel na linii brody rywala; trafienie odrzuca mu głowę
+const counterTgt = new THREE.Group(); counterTgt.visible = false; scene.add(counterTgt);
+{
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(0.1, 32), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.9, depthWrite: false, fog: false }));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.105, 0.125, 32), new THREE.MeshBasicMaterial({ color: 0x111111, fog: false }));
+  const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex('COUNTER!', '#ffd23f'), transparent: true, depthTest: false, fog: false }));
+  lab.scale.set(0.3, 0.15, 1); lab.position.y = 0.17; lab.renderOrder = 12; disc.renderOrder = 11; ring.renderOrder = 11;
+  counterTgt.add(disc, ring, lab);
+}
+let counterUntil = 0, counters = 0;
+function openCounter() {
+  const now = aNow(); counterUntil = now + 0.85;
+  counterTgt.position.set(head.x, head.y - 0.06, head.z - 0.5); counterTgt.visible = true;
+}
+function counterHit(side, gl) {
+  counterTgt.visible = false; counterUntil = 0; counters++;
+  const pts = 250 + 15 * thrown; score += pts; hudDirty = true;
+  popBurst(counterTgt.position.clone(), 1.5); flashSpeedLines();
+  popWord(pick(['COUNTER!', 'ドン!', 'GOT HIM!']), counterTgt.position.clone().add(new THREE.Vector3(0, 0.25, -0.1)), '#ffd23f', 1.4, 0.9);
+  popWord('+' + pts, counterTgt.position.clone().add(new THREE.Vector3(0.2, 0.05, -0.1)), '#7dff8a', 0.8, 0.8, new THREE.Vector3(0, 0.4, 0));
+  sfxHit(6); if (gl && gl.h) buzz(gl.h, 1, 90);
+  if (rm.ready) { rPlay(side === 'L' ? 'mx_hit_head_r' : 'mx_hit_head_l', 0.06, 1.25); nextPunchAt = Math.max(nextPunchAt, aNow() + 1.1); rm.reactUntil = aNow() + 0.9; }
+  if (counters % 3 === 0) trainerSay(pick(['Slip and rip! Beautiful!', 'He felt that one!', 'That is how you counter!']), true);
+}
+function updateCounter() {
+  if (!counterTgt.visible) return;
+  const now = aNow();
+  if (now > counterUntil || state !== 'fight') { counterTgt.visible = false; return; }
+  counterTgt.lookAt(head); const k = (counterUntil - now) / 0.85; counterTgt.scale.setScalar(0.85 + 0.15 * Math.sin(now * 20) * k + 0.15);
+  if (renderer.xr.isPresenting) for (const h of hands) if (h.has && h.vel.length() > 1.5 && h.pos.distanceTo(counterTgt.position) < 0.2) { counterHit(h.side, { h }); return; }
+}
 function throwPunchM(kind) {
   const c = RCLIP[kind], now = aNow();
   // tempo: na początku trybu cios jest wolny (zwolnione tempo), potem coraz szybszy
@@ -1833,8 +1864,10 @@ function updateRivalModel(dt) {
 }
 function updateDefenseM(dt) {
   const now = aNow();
+  updateCounter();
   rival.position.x = base.x + Math.sin(now * 1.1) * 0.04;
-  if (now >= nextPunchAt && punches.length === 0) {
+  if (rm.reactUntil && now > rm.reactUntil && punches.length === 0) { rm.reactUntil = 0; rIdle(0.2); }
+  if (now >= nextPunchAt && punches.length === 0 && !(rm.reactUntil && now < rm.reactUntil)) {
     const pool = thrown < 6 ? ['jab', 'cross'] : thrown < 16 ? ['jab', 'cross', 'hookL', 'hookR'] : ['jab', 'cross', 'hookL', 'hookR', 'upperL', 'upperR'];
     throwPunchM(pick(pool));
     if (thrown > 12 && Math.random() < 0.35) punches[punches.length - 1].double = true;
@@ -1854,7 +1887,7 @@ function updateDefenseM(dt) {
       punches.splice(i, 1); rm.stepTo = 0;
       if (state !== 'fight') continue;
       if (p.double) throwPunchM(pick(p.hand === 'L' ? ['cross', 'hookR', 'upperR'] : ['jab', 'hookL', 'upperL']));
-      else { rIdle(); nextPunchAt = now + gapDur() * 0.8; }
+      else { rIdle(); nextPunchAt = Math.max(nextPunchAt === Infinity ? 0 : nextPunchAt, now + gapDur() * 0.8); }
     }
   }
 }
@@ -1867,7 +1900,7 @@ function resolvePunchM(p, res, gl) {
     blocked++; score += 50 + 5 * thrown; popWord('BLOCK!', at, '#7dd3ff', 1.1); sfxHit(2);
     if (gl && gl.h) buzz(gl.h, 0.7, 70);
   } else if (res === 'dodge') {
-    dodged++; score += 100 + 10 * thrown; popWord(pick(['SLIP!', 'DODGE!', 'NICE!']), at, '#7dff8a', 1.1); sfxWhoosh();
+    dodged++; score += 100 + 10 * thrown; popWord(pick(['SLIP!', 'DODGE!', 'NICE!']), at, '#7dff8a', 1.1); sfxWhoosh(); openCounter();
     popWord('+' + (100 + 10 * thrown), new THREE.Vector3(head.x + 0.2, head.y - 0.05, head.z - 0.6), '#7dff8a', 0.5, 0.7, new THREE.Vector3(0, 0.3, 0));
   } else {
     taken++; lives--; popWord(pick(['OUCH!', 'BAM!', 'ドン!']), at, '#ff5a4a', 1.5); sfxOuch(); sfxHit(5);
@@ -2277,7 +2310,7 @@ function deskDown(side) {
     if (red.length) ballResolve(red.reduce((m, b) => (b.pos.z > m.pos.z ? b : m)), 'smash', null);
     return;
   }
-  if (mode === 'defense' && state === 'fight') deskGuard[side] = true; else deskPunch(side);
+  if (mode === 'defense' && state === 'fight') { if (counterTgt.visible) counterHit(side, null); else deskGuard[side] = true; } else deskPunch(side);
 }
 renderer.domElement.addEventListener('pointerdown', e => { e.preventDefault(); deskDown(e.button === 2 ? 'R' : 'L'); });
 addEventListener('pointerup', e => { deskGuard[e.button === 2 ? 'R' : 'L'] = false; });
@@ -2352,7 +2385,7 @@ renderer.setAnimationLoop(() => {
   if (!manualFrames) frame(dt);
 });
 window.__game = { get state() { return state; }, get score() { return score; }, get combo() { return combo; }, get active() { return active.length; }, list: active, camera, startCountdown, frame,
-  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken, level: bLevel, ball: { ...BS }, bag: { ...BG } }), punches, menuPads, rGloves, makeGlove, scene, balls, BS, get level() { return bLevel; }, get lives() { return lives; }, get slow() { return slowT; }, bm, bmMuzzle, placeMachine, BG, zoneMarks, get bagKey() { return bagCurCombo ? bagCurCombo.keys[bagCallIdx] : null; }, get flurry() { return bagFlurry; }, bagRoot, get gates() { return { ok: gatesOk, seen: gatesSeen }; } };
+  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken, level: bLevel, ball: { ...BS }, bag: { ...BG } }), punches, menuPads, rGloves, makeGlove, scene, balls, BS, get level() { return bLevel; }, get lives() { return lives; }, get slow() { return slowT; }, bm, bmMuzzle, placeMachine, BG, zoneMarks, get bagKey() { return bagCurCombo ? bagCurCombo.keys[bagCallIdx] : null; }, get flurry() { return bagFlurry; }, bagRoot, get gates() { return { ok: gatesOk, seen: gatesSeen }; }, counterTgt, get counters() { return counters; } };
 </script>
 </body>
 </html>

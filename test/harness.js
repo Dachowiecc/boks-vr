@@ -108,7 +108,14 @@ export function defenseStep(style) {
     setGlove('L', [-0.07, 1.57, -0.22]); setGlove('R', [0.07, 1.57, -0.22]);
     return;
   }
-  const ty = style === 'duck' && G.punches.some(p => p.phase === 'fly') ? 1.25 : 1.6;
+  // 'counter': schyla się pod cios, a po uniku bije prawą w cel kontry
+  if (style === 'counter' && G.counterTgt.visible) {
+    const c = G.counterTgt.position, g = glove.R, t = [c.x, c.y, c.z + 0.02], dd = t.map((v, i) => v - g[i]), l = Math.hypot(...dd), m = 6 / 72, k = l > m ? m / l : 1;
+    setGlove('R', g.map((v, i) => v + dd[i] * k));
+    const dy2 = 1.6 - head[1]; setHead(0, head[1] + Math.max(-3 / 72, Math.min(3 / 72, dy2)));
+    return;
+  }
+  const ty = (style === 'duck' || style === 'counter') && G.punches.some(p => p.phase === 'fly') ? 1.25 : 1.6;
   const dy = ty - head[1], m = 3 / 72;
   setHead(0, head[1] + Math.max(-m, Math.min(m, dy)));
   setGlove('L', [-0.3, head[1] - 0.55, -0.05]); setGlove('R', [0.3, head[1] - 0.55, -0.05]);
