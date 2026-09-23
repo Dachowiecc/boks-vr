@@ -14,6 +14,8 @@
   #info h1 { margin:0 0 6px; font-family:Bangers, Impact, sans-serif; font-weight:400; letter-spacing:1px; font-size:34px; color:var(--accent); }
   #info b { color:var(--accent); }
   #start, #startDef, #startBalls, #startBag, #startLine, #startWorkout { margin-top:10px; background:var(--red); color:#fff; border:2px solid #111; border-radius:8px; padding:10px 18px; font:400 22px Bangers, Impact, sans-serif; letter-spacing:1px; cursor:pointer; }
+  .prof input { width:110px; background:#2a231e; color:var(--fg); border:1px solid var(--accent); border-radius:6px; padding:4px 6px; }
+  .prof button { background:#3a312a; color:var(--fg); border:1px solid var(--accent); border-radius:6px; padding:4px 8px; cursor:pointer; }
   #err { color:#ff8a80; white-space:pre-wrap; font-size:12px; }
 </style>
 <script type="importmap">
@@ -34,6 +36,8 @@
   <div><b>Power Bag:</b> 90 seconds on the heavy bag. Hit the lit numbers with the right hand, as hard as you can. The last 15 seconds are a flurry: double damage.</div>
   <div><b>Slip Line:</b> a glowing line shows where your head goes. Put your head through every ring (slip, roll under, duck), then punch the counter pad.</div>
   <div><b>Full Workout:</b> all five drills in a row with short rests, like a real class. Endless drills stop after 60 seconds.</div>
+  <div class="prof"><b>Players:</b> <input id="name1" maxlength="12" placeholder="PLAYER 1"> <input id="name2" maxlength="12" placeholder="PLAYER 2">
+    <button id="p1">PLAY AS 1</button> <button id="p2">PLAY AS 2</button> <span id="pnow"></span></div>
   <div><b>Desktop:</b> left / right mouse button or F / J for left / right hand (hold to block in Don't Get Hit). C to duck, A / D to slip.</div>
   <button id="start">COMBOS</button> <button id="startBalls">BALL MACHINE</button> <button id="startBag">POWER BAG</button> <button id="startLine">SLIP LINE</button> <button id="startWorkout">FULL WORKOUT</button> <button id="startDef">DON'T GET HIT</button>
   <div id="err"></div>
@@ -647,7 +651,15 @@ bigText.renderOrder = 15; bigText.visible = false; scene.add(bigText);
 
 const bestOf = { combo: 0, defense: 0, balls: 0, bag: 0, line: 0, workout: 0 };
 const BEST_KEY = { combo: 'ana-best', defense: 'ana-best-def', balls: 'ana-best-balls', bag: 'ana-best-bag', line: 'ana-best-line', workout: 'ana-best-workout' };
-try { for (const m in BEST_KEY) bestOf[m] = +localStorage.getItem(BEST_KEY[m]) || 0; } catch (e) { /* bez zapisu */ }
+// dwa profile graczy: osobne rekordy i punkty doświadczenia; gracz 1 ma klucze bez przyrostka (stare wyniki zostają)
+const store = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, String(v)); } catch (e) { /* bez zapisu */ } } };
+let profile = +store.get('ana-profile') === 2 ? 2 : 1;
+const keyFor = k => (profile === 1 ? k : k + '-p2');
+const playerName = n => (store.get('ana-name-' + n) || 'PLAYER ' + n).toUpperCase().slice(0, 12);
+function loadProfile() {
+  for (const m in BEST_KEY) bestOf[m] = +store.get(keyFor(BEST_KEY[m])) || 0;
+  xp = +store.get(keyFor('ana-xp')) || 0;
+}
 function hearts(g, x, y, n, of) {
   for (let i = 0; i < of; i++) {
     const cx = x + (i - (of - 1) / 2) * 62;
@@ -796,12 +808,12 @@ function updateCountdown() {
 // ---------- postęp gracza: punkty doświadczenia i stopnie licencji ----------
 const RANKS = [['ROOKIE', 0], ['4-ROUND BOXER', 1000], ['6-ROUND BOXER', 2500], ['8-ROUND BOXER', 5000], ['10-ROUND BOXER', 9000], ['CONTENDER', 15000], ['CHAMPION', 24000], ['LEGEND', 36000]];
 const XP_DIV = { combo: 45, balls: 35, bag: 55, defense: 25, line: 45 };
-let xp = 0; try { xp = +localStorage.getItem('ana-xp') || 0; } catch (e) { /* bez zapisu */ }
+let xp = 0; loadProfile();
 let lastXP = 0;
 const rankOf = v => { let i = 0; while (i + 1 < RANKS.length && v >= RANKS[i + 1][1]) i++; return i; };
 function gainXP() {
   const before = rankOf(xp); lastXP = Math.max(50, Math.round(score / XP_DIV[mode]));
-  xp += lastXP; try { localStorage.setItem('ana-xp', String(xp)); } catch (e) { /* bez zapisu */ }
+  xp += lastXP; store.set(keyFor('ana-xp'), xp);
   popWord('+' + lastXP + ' XP', new THREE.Vector3(head.x + 0.5, head.y + 0.3, head.z - 1.4), '#7dd3ff', 1.1, 1.8, new THREE.Vector3(0, 0.06, 0));
   const after = rankOf(xp);
   if (after > before) {
@@ -816,7 +828,7 @@ function gainXP() {
 function drawRankBar(g, w, y) {
   const r = rankOf(xp), lo = RANKS[r][1], hi = RANKS[Math.min(RANKS.length - 1, r + 1)][1], p = hi > lo ? (xp - lo) / (hi - lo) : 1;
   g.fillStyle = '#7dd3ff'; g.font = `bold 30px ${SANS}`; g.textAlign = 'center';
-  g.fillText(`${RANKS[r][0]} · ${xp} XP` + (r + 1 < RANKS.length ? ` · next: ${RANKS[r + 1][0]}` : ''), w / 2, y);
+  g.fillText(`${playerName(profile)} · ${RANKS[r][0]} · ${xp} XP` + (r + 1 < RANKS.length ? ` · next: ${RANKS[r + 1][0]}` : ''), w / 2, y);
   g.fillStyle = '#3a312a'; g.fillRect(120, y + 22, w - 240, 12); g.fillStyle = '#7dd3ff'; g.fillRect(120, y + 22, (w - 240) * Math.min(1, p), 12);
 }
 // ---------- FULL WORKOUT: pięć rund po kolei z przerwami, jak zajęcia w FitXR ----------
@@ -849,9 +861,9 @@ function workoutRoundDone() {
   }
   // koniec treningu
   const bonus = Math.round(workout.total / 60);
-  xp += bonus; try { localStorage.setItem('ana-xp', String(xp)); } catch (e) { /* bez zapisu */ }
+  xp += bonus; store.set(keyFor('ana-xp'), xp);
   const rec = workout.total > (bestOf.workout || 0);
-  if (rec) { bestOf.workout = workout.total; try { localStorage.setItem('ana-best-workout', String(workout.total)); } catch (e) { /* bez zapisu */ } }
+  if (rec) { bestOf.workout = workout.total; store.set(keyFor(BEST_KEY.workout), workout.total); }
   popWord('WORKOUT COMPLETE!', new THREE.Vector3(head.x, head.y + 0.4, head.z - 1.5), '#ffd23f', 2.6, 2.6, new THREE.Vector3(0, 0.03, 0));
   popWord('+' + bonus + ' XP BONUS', new THREE.Vector3(head.x, head.y + 0.1, head.z - 1.5), '#7dd3ff', 1.4, 2.6, new THREE.Vector3(0, 0.03, 0));
   if (actx) bell(actx.currentTime, 4); flashSpeedLines();
@@ -863,7 +875,7 @@ function endRound() {
   if (!renderer.xr.isPresenting) document.getElementById('info').style.display = '';
   const key = BEST_KEY[mode];
   const rec = score > bestOf[mode];
-  if (rec) { bestOf[mode] = score; try { localStorage.setItem(key, String(score)); } catch (e) { /* bez zapisu */ } }
+  if (rec) { bestOf[mode] = score; store.set(keyFor(key), score); }
   refreshMenuBest(); gainXP();
   if (workout && !workout.done) workoutRoundDone();
   if (mode === 'bag') {
@@ -2300,6 +2312,37 @@ function buildMenu() {
     g.userData = { mode: m, x, y, best }; g.visible = false; scene.add(g); menuPads.push(g);
   }
 }
+const profilePads = [];
+function nameTex(n, on) {
+  return canvasTex(256, 64, (g, w, h) => {
+    g.fillStyle = on ? '#ffd23f' : 'rgba(20,16,14,.85)'; g.beginPath(); g.roundRect(2, 2, w - 4, h - 4, 16); g.fill();
+    g.fillStyle = on ? '#111' : '#fff4dc'; g.font = `bold 34px ${SANS}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(playerName(n), w / 2, h / 2 + 2);
+  }, 'name' + n + on + playerName(n));
+}
+function buildProfilePads() {
+  for (const n of [1, 2]) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, fog: false }));
+    s.scale.set(0.24, 0.06, 1); s.renderOrder = 12; s.userData = { n, x: n === 1 ? -0.16 : 0.16 }; s.visible = false; scene.add(s); profilePads.push(s);
+  }
+  refreshProfilePads();
+}
+function refreshProfilePads() { for (const s of profilePads) { s.material.map = nameTex(s.userData.n, s.userData.n === profile); s.material.needsUpdate = true; } }
+function setProfile(n) {
+  profile = n; store.set('ana-profile', n); loadProfile(); refreshMenuBest(); refreshProfilePads(); drawHUD(); showProfile();
+  trainerSay(`Hello ${playerName(n).toLowerCase()}! Pick a drill.`, true);
+}
+function updateProfilePads(show, dt) {
+  for (const s of profilePads) {
+    s.visible = show; if (!show) continue;
+    const k = Math.min(1, dt * 3);
+    s.position.x += (head.x + s.userData.x - s.position.x) * k; s.position.y += (head.y + 0.22 - s.position.y) * k; s.position.z += (head.z - 0.8 - s.position.z) * k;
+  }
+  if (!show || nowS() < menuArmAt) return;
+  for (const h of hands) {
+    if (!h.has || h.vel.length() < 1.2) continue;
+    for (const s of profilePads) if (s.userData.n !== profile && s.position.distanceTo(h.pos) < 0.12) { setProfile(s.userData.n); popBurst(s.position.clone(), 0.6); sfxHit(2); buzz(h, 0.6, 40); menuArmAt = nowS() + 0.5; return; }
+  }
+}
 function bestLabelTex(n) {
   return canvasTex(256, 64, (g, w, h) => {
     g.fillStyle = 'rgba(20,16,14,.85)'; g.beginPath(); g.roundRect(2, 2, w - 4, h - 4, 14); g.fill();
@@ -2309,6 +2352,7 @@ function bestLabelTex(n) {
 function refreshMenuBest() { for (const g of menuPads) { g.userData.best.material.map = bestLabelTex(Math.round(bestOf[g.userData.mode] || 0)); g.userData.best.material.needsUpdate = true; } }
 function updateMenu(dt) {
   const show = renderer.xr.isPresenting && (state === 'menu' || (state === 'end' && (!workout || workout.done)));
+  updateProfilePads(show, dt);
   for (const g of menuPads) {
     g.visible = show;
     if (!show) continue;
@@ -2389,7 +2433,7 @@ const GLOVE_REST = [new THREE.Vector3(-0.26, -0.3, -0.62), new THREE.Vector3(0.2
 deskGloves.forEach((g, i) => { g.position.copy(GLOVE_REST[i]); g.rotation.set(0.9, i ? -0.25 : 0.25, 0); g.userData.p = 0; camera.add(g); });
 deskGloves.forEach((g, i) => gloveSlots.push({ side: i ? 'R' : 'L', get: () => deskGloves[i], set: ng => { deskGloves[i] = ng; } }));
 const keys = new Set();
-addEventListener('keydown', e => keys.add(e.key.toLowerCase()));
+addEventListener('keydown', e => { if (e.target.tagName !== 'INPUT') keys.add(e.key.toLowerCase()); });
 addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
 renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
 // cios na komputerze: bez celowania, trafia najbliższą tarczę w zasięgu
@@ -2417,7 +2461,7 @@ function deskDown(side) {
 renderer.domElement.addEventListener('pointerdown', e => { e.preventDefault(); deskDown(e.button === 2 ? 'R' : 'L'); });
 addEventListener('pointerup', e => { deskGuard[e.button === 2 ? 'R' : 'L'] = false; });
 addEventListener('keydown', e => {
-  if (e.repeat) return;
+  if (e.repeat || e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
   if (k === 'f') deskDown('L'); else if (k === 'j') deskDown('R');
 });
@@ -2428,6 +2472,13 @@ document.getElementById('startBalls').addEventListener('click', () => { workout 
 document.getElementById('startBag').addEventListener('click', () => { workout = null; startCountdown('bag'); });
 document.getElementById('startLine').addEventListener('click', () => { workout = null; startCountdown('line'); });
 document.getElementById('startWorkout').addEventListener('click', () => startWorkout());
+for (const n of [1, 2]) {
+  const inp = document.getElementById('name' + n); inp.value = store.get('ana-name-' + n) || '';
+  inp.addEventListener('input', () => { store.set('ana-name-' + n, inp.value.trim()); refreshProfilePads(); drawHUD(); showProfile(); });
+  document.getElementById('p' + n).addEventListener('click', () => { setProfile(n); showProfile(); });
+}
+function showProfile() { document.getElementById('pnow').textContent = 'now: ' + playerName(profile); }
+showProfile();
 function updateDesktop(dt) {
   const duck = keys.has('c') || keys.has(' ') ? -0.35 : 0;
   const lean = (keys.has('d') ? 0.3 : 0) - (keys.has('a') ? 0.3 : 0);
@@ -2442,7 +2493,7 @@ function updateDesktop(dt) {
 }
 
 // ---------- pętla ----------
-buildGym(); buildTrainer(); buildRival(); showRival(false); buildMachine(); buildBag(); buildMenu(); refreshMenuBest(); trainerSay('Welcome to ANA Boxing Gym!', true); drawHUD();
+buildGym(); buildTrainer(); buildRival(); showRival(false); buildMachine(); buildBag(); buildMenu(); refreshMenuBest(); buildProfilePads(); trainerSay('Welcome to ANA Boxing Gym!', true); drawHUD();
 const clock = new THREE.Clock();
 function frame(dt, draw = true) {
   const now = nowS();
