@@ -688,6 +688,7 @@ function drawHUD() {
     g.fillStyle = '#ffd23f'; g.font = `400 120px ${BANG}`; g.fillText('ANA BOXING GYM', w / 2, 120);
     g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`; g.fillText(vr ? 'Punch a target to pick a mode' : 'Pick a mode in the panel on the left', w / 2, 200);
     drawRankBar(g, w, 256);
+    if (!rm.ready || !cm.ready) { g.fillStyle = '#ffb13d'; g.font = `bold 26px ${SANS}`; g.fillText('Loading trainer and rival...', w / 2, 30); }
   } else if (state === 'end' && mode === 'line') {
     g.fillStyle = '#ffd23f'; g.font = `400 88px ${BANG}`; g.fillText('ROUND OVER', w / 2, 70);
     g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`;
@@ -2205,10 +2206,10 @@ const mTmp = new THREE.Vector3(), mRest = { L: new THREE.Vector3(), R: new THREE
 function updateLateModels() {
   const busy = state === 'fight' || state === 'countdown';
   if (rm.pending && !(busy && mode === 'defense')) {
-    rm.pending = false; rm.ready = true; rm.root.visible = true;
+    rm.pending = false; rm.ready = true; rm.root.visible = true; hudDirty = true;
     for (const ch of [...rival.children]) if (ch !== rm.root) ch.visible = false;
   }
-  if (cm.pending && !(busy && mode === 'combo')) { cm.pending = false; cm.ready = true; }
+  if (cm.pending && !(busy && mode === 'combo')) { cm.pending = false; cm.ready = true; hudDirty = true; }
 }
 function updateCoach(dt) {
   updateLateModels();
