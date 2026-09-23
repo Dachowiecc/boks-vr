@@ -13,7 +13,7 @@
   #info { position:fixed; left:16px; top:16px; max-width:min(420px, calc(100vw - 64px)); background:rgba(20,16,14,.82); border:2px solid var(--accent); padding:14px 16px; border-radius:10px; font-size:14px; line-height:1.5; z-index:5; }
   #info h1 { margin:0 0 6px; font-family:Bangers, Impact, sans-serif; font-weight:400; letter-spacing:1px; font-size:34px; color:var(--accent); }
   #info b { color:var(--accent); }
-  #start, #startDef, #startBalls, #startBag { margin-top:10px; background:var(--red); color:#fff; border:2px solid #111; border-radius:8px; padding:10px 18px; font:400 22px Bangers, Impact, sans-serif; letter-spacing:1px; cursor:pointer; }
+  #start, #startDef, #startBalls, #startBag, #startLine { margin-top:10px; background:var(--red); color:#fff; border:2px solid #111; border-radius:8px; padding:10px 18px; font:400 22px Bangers, Impact, sans-serif; letter-spacing:1px; cursor:pointer; }
   #err { color:#ff8a80; white-space:pre-wrap; font-size:12px; }
 </style>
 <script type="importmap">
@@ -32,8 +32,9 @@
   <div><b>Don't Get Hit:</b> your rival throws punches, slow at first, then faster. Slip, duck or block with your gloves. Five clean hits and you're out.</div>
   <div><b>Ball Machine:</b> the machine shoots tennis balls at your head. Yellow: slip or duck. Red: punch it. Three at once: roll under them. Every 10 balls the level goes up.</div>
   <div><b>Power Bag:</b> 90 seconds on the heavy bag. Hit the lit numbers with the right hand, as hard as you can. The last 15 seconds are a flurry: double damage.</div>
+  <div><b>Slip Line:</b> a glowing line shows where your head goes. Put your head through every ring (slip, roll under, duck), then punch the counter pad.</div>
   <div><b>Desktop:</b> left / right mouse button or F / J for left / right hand (hold to block in Don't Get Hit). C to duck, A / D to slip.</div>
-  <button id="start">COMBOS</button> <button id="startBalls">BALL MACHINE</button> <button id="startBag">POWER BAG</button> <button id="startDef">DON'T GET HIT</button>
+  <button id="start">COMBOS</button> <button id="startBalls">BALL MACHINE</button> <button id="startBag">POWER BAG</button> <button id="startLine">SLIP LINE</button> <button id="startDef">DON'T GET HIT</button>
   <div id="err"></div>
 </div>
 <script>
@@ -616,8 +617,8 @@ slowVig.renderOrder = 19; slowVig.position.set(0, 0, -0.5); slowVig.visible = fa
 const bigText = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex('3'), transparent: true, depthTest: false, fog: false }));
 bigText.renderOrder = 15; bigText.visible = false; scene.add(bigText);
 
-const bestOf = { combo: 0, defense: 0, balls: 0, bag: 0 };
-const BEST_KEY = { combo: 'ana-best', defense: 'ana-best-def', balls: 'ana-best-balls', bag: 'ana-best-bag' };
+const bestOf = { combo: 0, defense: 0, balls: 0, bag: 0, line: 0 };
+const BEST_KEY = { combo: 'ana-best', defense: 'ana-best-def', balls: 'ana-best-balls', bag: 'ana-best-bag', line: 'ana-best-line' };
 try { for (const m in BEST_KEY) bestOf[m] = +localStorage.getItem(BEST_KEY[m]) || 0; } catch (e) { /* bez zapisu */ }
 function hearts(g, x, y, n, of) {
   for (let i = 0; i < of; i++) {
@@ -637,6 +638,12 @@ function drawHUD() {
   if (state === 'menu') {
     g.fillStyle = '#ffd23f'; g.font = `400 120px ${BANG}`; g.fillText('ANA BOXING GYM', w / 2, 120);
     g.fillStyle = '#fff4dc'; g.font = `bold 44px ${SANS}`; g.fillText(vr ? 'Punch a target to pick a mode' : 'Pick a mode in the panel on the left', w / 2, 236);
+  } else if (state === 'end' && mode === 'line') {
+    g.fillStyle = '#ffd23f'; g.font = `400 88px ${BANG}`; g.fillText('ROUND OVER', w / 2, 70);
+    g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`;
+    g.fillText(`Rings ${gatesOk}/${gatesSeen} · Counters ${hits}/${padsSeen} · Best streak ${maxCombo}`, w / 2, 160);
+    g.fillText(`Score ${score} · Best ${bestOf.line}`, w / 2, 212);
+    g.fillStyle = '#ffd23f'; g.fillText(vr ? 'Punch a target to go again' : 'Pick a mode to go again', w / 2, 272);
   } else if (state === 'end' && mode === 'bag') {
     g.fillStyle = '#ffd23f'; g.font = `400 88px ${BANG}`; g.fillText('TIME! RANK ' + bagRank(), w / 2, 70);
     g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`;
@@ -716,6 +723,7 @@ const nowS = () => vnow ?? performance.now() / 1000;
 const aNow = () => vnow ?? actx.currentTime;
 const songTime = () => aNow() - startTime;
 const mult = () => 1 + Math.min(3, Math.floor(combo / 10));
+const chartMode = () => mode === 'combo' || mode === 'line';
 
 function startCountdown(m = lastMode) {
   initAudio(); actx.resume();
@@ -724,12 +732,12 @@ function startCountdown(m = lastMode) {
   clearPunches();
   mode = m; lastMode = m;
   score = combo = maxCombo = hits = misses = padsSeen = dodgeOk = dodgeSeen = 0;
-  lives = 5; thrown = dodged = blocked = taken = 0; comboName = comboWords = '';
+  lives = 5; thrown = dodged = blocked = taken = 0; comboName = comboWords = ''; gatesOk = gatesSeen = gateChain = 0;
   rival.visible = mode === 'defense';
   if (mode === 'balls') resetBalls();
   if (mode === 'bag') resetBag();
   state = 'countdown'; cdStart = nowS();
-  trainerSay(mode === 'defense' ? 'Hands up and move your head!' : mode === 'balls' ? 'Yellow ball: slip it. Red ball: smash it!' : mode === 'bag' ? 'Hit the lit numbers. Hips into every punch!' : 'Show me those fists!', true); drawHUD();
+  trainerSay(mode === 'defense' ? 'Hands up and move your head!' : mode === 'balls' ? 'Yellow ball: slip it. Red ball: smash it!' : mode === 'bag' ? 'Hit the lit numbers. Hips into every punch!' : mode === 'line' ? 'Head through the rings, then counter!' : 'Show me those fists!', true); drawHUD();
 }
 function updateCountdown() {
   const e = nowS() - cdStart, n = 3 - Math.floor(e);
@@ -739,7 +747,7 @@ function updateCountdown() {
   const s = n > 0 ? 0.7 + (e % 1) * 0.3 : 1.2; bigText.scale.set(1.2 * s, 0.6 * s, 1);
   if (e >= 3) {
     base.copy(head); chartIdx = 0; nextBeat = 0;
-    chart = mode === 'combo' ? (window.__testChart ? window.__testChart() : buildChart()) : [];
+    chart = mode === 'combo' ? (window.__testChart ? window.__testChart() : buildChart()) : mode === 'line' ? buildLineChart() : [];
     startTime = aNow() + 0.05; bell(actx.currentTime, 1);
     if (mode === 'defense') { placeRival(); nextPunchAt = aNow() + 1.2; }
     if (mode === 'balls') startBalls();
@@ -767,12 +775,12 @@ function endRound() {
   drawHUD();
 }
 function scheduleMusic() {
-  const ahead = aNow() + 0.25, lastIdx = mode !== 'combo' ? Infinity : (ROUND_BARS + 1) * 8;
+  const ahead = aNow() + 0.25, lastIdx = !chartMode() ? Infinity : (ROUND_BARS + 1) * 8;
   while (nextBeat < lastIdx) {
     const t = startTime + nextBeat * BEAT / 2;
     if (t > ahead) break;
     const bar = Math.floor(nextBeat / 8), pos = nextBeat % 8;
-    if ((bar < ROUND_BARS || mode !== 'combo') && vnow === null) {
+    if ((bar < ROUND_BARS || !chartMode()) && vnow === null) {
       if (pos % 2 === 0) kick(t);
       if (bar >= 2 && (pos === 2 || pos === 6)) snare(t);
       hat(t, pos % 2 === 1);
@@ -796,6 +804,8 @@ function spawn(e) {
     a.obj = makePad(e); a.ox = off[0]; a.oy = off[1];
     a.x = head.x + off[0]; a.y = head.y + off[1]; a.zHit = base.z + off[2];
     padsSeen++;
+  } else if (e.kind === 'gate') {
+    a.obj = makeGate(e); a.x = base.x + e.dx; a.y = base.y + e.dy; a.zHit = base.z;
   } else {
     a.obj = makeObstacle(e.kind); a.zHit = base.z;
     a.x = e.kind === 'duck' ? base.x : e.kind === 'wallL' ? base.x - 0.67 : base.x + 0.67;
@@ -865,7 +875,8 @@ function updateObjects(dt) {
         a.x += (head.x + a.ox - a.x) * kf; a.y += (head.y + a.oy - a.y) * kf;
         a.obj.rotation.z = Math.sin(st * 6 + i) * 0.12;
         if (a.z > a.zHit + 0.4) { missPad(a); removeActive(i); }
-      } else if (a.z >= a.zHit - 0.25) { checkDodge(a); removeActive(i); }
+      } else if (a.e.kind === 'gate') { if (a.z >= a.zHit) { checkGate(a); removeActive(i); } }
+      else if (a.z >= a.zHit - 0.25) { checkDodge(a); removeActive(i); }
     } else {
       a.vel.y -= 9.8 * dt; a.obj.position.addScaledVector(a.vel, dt);
       a.obj.rotation.x += a.spin * dt; a.obj.rotation.y += a.spin * 0.5 * dt;
@@ -1813,17 +1824,116 @@ function resolvePunchM(p, res, gl) {
 }
 loadRival().catch(e => console.warn('rywal z modelu niedostępny, zostaje rywal z brył', e));
 
+// ---------- tryb SLIP LINE: głowa przez obręcze na linie, po uniku kontra ----------
+// Lina pokazuje drogę głowy: slip w bok, rolka pod liną (U), zejście w dół. Obręcz trzeba przejść głową,
+// po każdym uniku leci tarcza na kontrę zgodną z bokserską zasadą (rolka w prawo -> lewy sierp itd.).
+const GATE_R = 0.14, GATE_OK = 0.17;
+const GATE_GEO = new THREE.TorusGeometry(GATE_R, 0.014, 8, 36);
+const gateMat = new THREE.MeshBasicMaterial({ color: 0xffd23f, fog: false });
+const gateGlowMat = new THREE.MeshBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+const GATE_GLOW_GEO = new THREE.TorusGeometry(GATE_R, 0.04, 8, 36);
+// wzory ruchu głowy: [beat, dx, dy] obręczy i kontry [beat, numer ciosu]
+const LINE_PATTERNS = [
+  { name: 'SLIP LEFT, CROSS', lvl: 0, gates: [[0, -0.22, -0.05]], counter: [[1, 2]] },
+  { name: 'SLIP RIGHT, HOOK', lvl: 0, gates: [[0, 0.22, -0.05]], counter: [[1, 3]] },
+  { name: 'DUCK, UPPERCUT', lvl: 0, gates: [[0, 0, -0.3]], counter: [[1, 6]] },
+  { name: 'ROLL RIGHT, LEFT HOOK', lvl: 1, gates: [[0, 0.05, -0.3], [0.5, 0.24, -0.06]], counter: [[1.5, 3]] },
+  { name: 'ROLL LEFT, RIGHT HOOK', lvl: 1, gates: [[0, -0.05, -0.3], [0.5, -0.24, -0.06]], counter: [[1.5, 4]] },
+  { name: 'SLIP SLIP, 1-2', lvl: 1, gates: [[0, -0.22, -0.05], [1, 0.22, -0.05]], counter: [[2, 1], [2.5, 2]] },
+  { name: 'ROLL ROLL, 3-2', lvl: 2, gates: [[0, 0.05, -0.3], [0.5, 0.24, -0.06], [1.5, -0.05, -0.3], [2, -0.24, -0.06]], counter: [[3, 3], [3.5, 2]] },
+  { name: 'WEAVE AND FIRE', lvl: 2, gates: [[0, -0.22, -0.05], [0.5, 0, -0.28], [1, 0.22, -0.05]], counter: [[2, 3], [2.5, 2], [3, 3]] },
+];
+function buildLineChart() {
+  const ev = [], end = ROUND_BARS * 4 * BEAT - 2 * BEAT;
+  let t = 8 * BEAT, last = null;
+  while (t < end) {
+    const p = t / end, lvl = p < 0.3 ? 0 : p < 0.65 ? 1 : 2;
+    const pool = LINE_PATTERNS.filter(x => x.lvl <= lvl && x !== last);
+    const c = pick(pool.flatMap(x => (x.lvl === lvl ? [x, x] : [x])));
+    ev.push({ kind: 'announce', t: t - 0.001, combo: { name: c.name, words: 'HEAD THROUGH THE RINGS', lvl: c.lvl } });
+    for (const [b, dx, dy] of c.gates) ev.push({ kind: 'gate', t: t + b * BEAT, dx, dy });
+    let lastB = 0;
+    for (const [b, n] of c.counter) { const [hand, punch] = NUM[n]; ev.push({ kind: 'pad', t: t + b * BEAT, hand, punch, key: punch + hand, num: n, combo: c.name }); lastB = Math.max(lastB, b); }
+    // powrót głowy na środek: obręcz w osi po kontrze
+    ev.push({ kind: 'gate', t: t + (lastB + 1) * BEAT, dx: 0, dy: 0, center: true });
+    t += Math.ceil(lastB + 3) * BEAT; last = c;
+  }
+  return ev.sort((a, b) => a.t - b.t);
+}
+function makeGate(e) {
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(GATE_GEO, gateMat); ring.add(outlineOf(GATE_GEO, 0.006));
+  const glow = new THREE.Mesh(GATE_GLOW_GEO, gateGlowMat);
+  const hang = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, ROPE_UP - GATE_R, 4), gateMat); hang.position.y = GATE_R + (ROPE_UP - GATE_R) / 2;
+  g.add(glow, ring, hang);
+  if (e.center) g.scale.setScalar(0.85);
+  return g;
+}
+// lina: wstęga przez środki obręczy przed graczem, od głowy w głąb
+const LINE_N = 64, ROPE_UP = 0.22;
+const lineMesh = (() => {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(LINE_N * 2 * 3), 3));
+  const col = new Float32Array(LINE_N * 2 * 4);
+  for (let i = 0; i < LINE_N; i++) for (let j = 0; j < 2; j++) { const o = (i * 2 + j) * 4; col[o] = 1; col[o + 1] = 0.86; col[o + 2] = 0.25; col[o + 3] = 0.95 * Math.min(1, i / 4) * (1 - 0.7 * i / LINE_N); }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+  const idx = []; for (let i = 0; i < LINE_N - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  g.setIndex(idx);
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+  m.frustumCulled = false; m.renderOrder = 5; m.visible = false; scene.add(m);
+  return m;
+})();
+const lnA = new THREE.Vector3(), lnB = new THREE.Vector3(), lnS = new THREE.Vector3();
+function updateLine() {
+  const gates = active.filter(a => a.e.kind === 'gate' && a.state === 'fly').sort((a, b) => b.z - a.z);
+  lineMesh.visible = mode === 'line' && state === 'fight' && gates.length > 0;
+  if (!lineMesh.visible) return;
+  // punkty: głowa gracza, potem obręcze od najbliższej do najdalszej
+  // lina wisi nad drogą głowy (jak w drylu z liną): głowa idzie pod nią przez obręcze
+  const pts = [new THREE.Vector3(head.x, head.y + ROPE_UP, head.z - 0.45)];
+  for (const a of gates) if (a.z < head.z - 0.6) pts.push(new THREE.Vector3(a.x, a.y + ROPE_UP, a.z));
+  if (pts.length < 2) pts.push(pts[0].clone().add(new THREE.Vector3(0, 0, -3)));
+  const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+  const pa = lineMesh.geometry.attributes.position;
+  for (let i = 0; i < LINE_N; i++) {
+    curve.getPoint(i / (LINE_N - 1), lnA); curve.getPoint(Math.min(1, (i + 1) / (LINE_N - 1)), lnB);
+    lnB.sub(lnA); if (lnB.lengthSq() < 1e-8) lnB.set(0, 0, -1);
+    lnS.crossVectors(lnB, UP).normalize().multiplyScalar(0.035);
+    pa.setXYZ(i * 2, lnA.x + lnS.x, lnA.y + lnS.y, lnA.z + lnS.z); pa.setXYZ(i * 2 + 1, lnA.x - lnS.x, lnA.y - lnS.y, lnA.z - lnS.z);
+  }
+  pa.needsUpdate = true;
+}
+let gatesOk = 0, gatesSeen = 0, gateChain = 0;
+function checkGate(a) {
+  gatesSeen++;
+  const d = Math.hypot(head.x - a.x, head.y - a.y);
+  const at = new THREE.Vector3(a.x, a.y + 0.2, base.z - 0.6);
+  if (d < GATE_OK) {
+    gatesOk++; gateChain++; combo++; maxCombo = Math.max(maxCombo, combo);
+    const perfect = d < 0.07, pts = Math.round((perfect ? 100 : 60) * mult()); score += pts;
+    popBurst(new THREE.Vector3(a.x, a.y, a.zHit - 0.3), perfect ? 1.1 : 0.8);
+    if (!a.e.center) popWord(perfect ? 'PERFECT!' : pick(['SLIP!', 'NICE!', 'ROLL!']), at, perfect ? '#ffd23f' : '#7dff8a', 0.8, 0.55);
+    // dzwonek rośnie z serią: nagroda słyszalna
+    if (actx) tone(actx.currentTime, 'triangle', 520 * Math.pow(1.06, Math.min(12, gateChain)), 0, 0.18, 0.25);
+  } else {
+    gateChain = 0; combo = 0;
+    popWord('MISS', at, '#bbbbbb', 0.8, 0.5);
+    trainerSay(pick(['Follow the line!', 'Lower! Bend the knees!', 'Head through the ring!']));
+  }
+  hudDirty = true;
+}
+
 // ---------- menu w VR: uderz tarczę, żeby wybrać tryb ----------
 const menuPads = [];
 let menuArmAt = 0;
 function buildMenu() {
   const geo = new THREE.CylinderGeometry(0.17, 0.17, 0.08, 28); geo.rotateX(Math.PI / 2);
-  for (const [m, label, col, x] of [['combo', 'COMBOS', 0xffd23f, -0.6], ['balls', 'BALL MACHINE', 0xff7a1a, -0.2], ['bag', 'POWER BAG', 0xe8412c, 0.2], ['defense', "DON'T GET HIT", 0x7dff8a, 0.6]]) {
+  for (const [m, label, col, x, y] of [['combo', 'COMBOS', 0xffd23f, -0.4, 0.12], ['balls', 'BALL MACHINE', 0xff7a1a, 0, 0.12], ['bag', 'POWER BAG', 0xe8412c, 0.4, 0.12], ['defense', "DON'T GET HIT", 0x7dff8a, 0.2, -0.3], ['line', 'SLIP LINE', 0x7dd3ff, -0.2, -0.3]]) {
     const g = new THREE.Group();
     g.add(toon(geo, col, { outline: 0.018 }));
     const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex(label, '#fff'), transparent: true, depthTest: false, fog: false }));
-    lab.scale.set(0.34, 0.17, 1); lab.position.set(0, 0.26, 0); lab.renderOrder = 12; g.add(lab);
-    g.userData = { mode: m, x }; g.visible = false; scene.add(g); menuPads.push(g);
+    lab.scale.set(0.3, 0.15, 1); lab.position.set(0, 0.24, 0); lab.renderOrder = 12; g.add(lab);
+    g.userData = { mode: m, x, y }; g.visible = false; scene.add(g); menuPads.push(g);
   }
 }
 function updateMenu(dt) {
@@ -1833,8 +1943,8 @@ function updateMenu(dt) {
     if (!show) continue;
     const k = Math.min(1, dt * 3);
     g.position.x += (head.x + g.userData.x - g.position.x) * k;
-    g.position.y += (head.y - 0.12 - g.position.y) * k;
-    g.position.z += (head.z - 0.8 + Math.abs(g.userData.x) * 0.25 - g.position.z) * k;
+    g.position.y += (head.y - 0.12 + g.userData.y - g.position.y) * k;
+    g.position.z += (head.z - 0.75 + Math.abs(g.userData.x) * 0.2 - g.position.z) * k;
     g.scale.setScalar(nowS() < menuArmAt ? 0.6 : 1);
   }
   if (!show || nowS() < menuArmAt) return;
@@ -1945,6 +2055,7 @@ document.getElementById('start').addEventListener('click', () => startCountdown(
 document.getElementById('startDef').addEventListener('click', () => startCountdown('defense'));
 document.getElementById('startBalls').addEventListener('click', () => startCountdown('balls'));
 document.getElementById('startBag').addEventListener('click', () => startCountdown('bag'));
+document.getElementById('startLine').addEventListener('click', () => startCountdown('line'));
 function updateDesktop(dt) {
   const duck = keys.has('c') || keys.has(' ') ? -0.35 : 0;
   const lean = (keys.has('d') ? 0.3 : 0) - (keys.has('a') ? 0.3 : 0);
@@ -1980,12 +2091,12 @@ function frame(dt, draw = true) {
   if (mode === 'bag' && state !== 'menu') updateBag(dt);
   if (state === 'fight') {
     scheduleMusic();
-    if (mode === 'combo') updateChart(); else if (mode === 'defense') updateDefense(dt); else if (mode === 'balls') updateBalls(dt);
+    if (chartMode()) updateChart(); else if (mode === 'defense') updateDefense(dt); else if (mode === 'balls') updateBalls(dt);
     if (bigText.visible && now - cdStart > 3.6) bigText.visible = false;
     const sec = Math.floor(songTime());
     if (sec !== lastHudSec) { lastHudSec = sec; drawHUD(); }
   }
-  updateObjects(dt); updateFx(dt);
+  updateObjects(dt); updateLine(); updateFx(dt);
   if (flashT > 0) { flashT -= dt; hitFlash.material.opacity = Math.max(0, flashT / 0.35) * 0.45; if (flashT <= 0) hitFlash.visible = false; }
   if (state === 'fight' && (hits + misses + dodgeSeen) !== updateHUDCount) { updateHUDCount = hits + misses + dodgeSeen; hudDirty = true; }
   if (hudDirty) drawHUD();
@@ -2005,7 +2116,7 @@ renderer.setAnimationLoop(() => {
   if (!manualFrames) frame(dt);
 });
 window.__game = { get state() { return state; }, get score() { return score; }, get combo() { return combo; }, get active() { return active.length; }, list: active, camera, startCountdown, frame,
-  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken, level: bLevel, ball: { ...BS }, bag: { ...BG } }), punches, menuPads, rGloves, makeGlove, scene, balls, BS, get level() { return bLevel; }, get lives() { return lives; }, get slow() { return slowT; }, bm, bmMuzzle, placeMachine, BG, zoneMarks, get bagKey() { return bagCurCombo ? bagCurCombo.keys[bagCallIdx] : null; }, get flurry() { return bagFlurry; }, bagRoot };
+  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken, level: bLevel, ball: { ...BS }, bag: { ...BG } }), punches, menuPads, rGloves, makeGlove, scene, balls, BS, get level() { return bLevel; }, get lives() { return lives; }, get slow() { return slowT; }, bm, bmMuzzle, placeMachine, BG, zoneMarks, get bagKey() { return bagCurCombo ? bagCurCombo.keys[bagCallIdx] : null; }, get flurry() { return bagFlurry; }, bagRoot, get gates() { return { ok: gatesOk, seen: gatesSeen }; } };
 </script>
 </body>
 </html>

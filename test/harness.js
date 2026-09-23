@@ -44,12 +44,18 @@ const head = [0, 1.6, 0];
 // aim = 'pad' celuje w rzeczywiste położenie tarczy.
 let hold = { hx: 0, hy: 1.6, until: 0 };
 // hold: ile sekund głowa zostaje w uniku po przejściu przeszkody (kontra z pozycji uniku)
+let gateLead = 0.45, gateMiss = 0;
+export function setGateBot(lead, miss) { gateLead = lead; gateMiss = miss; }
 export function bodyStep({ aim = 'body', dodge = true, maxSpeed = 6, holdS = 0 } = {}) {
   let hx = 0, hy = 1.6, any = false;
   if (dodge) for (const a of G.list) {
-    if (a.state !== 'fly' || a.e.kind === 'pad' || a.e.kind === 'punch') continue;
+    if (a.state !== 'fly' || a.e.kind === 'pad' || a.e.kind === 'punch' || a.e.kind === 'gate') continue;
     if (a.z > a.zHit - 3.5) { any = true; if (a.e.kind === 'duck') hy = 1.3; else hx = a.e.kind === 'wallL' ? 0.3 : -0.3; }
   }
+  // obręcze SLIP LINE: głowa jedzie do najbliższej nadchodzącej obręczy (offset > 0 celowo chybia)
+  let gate = null;
+  for (const a of G.list) if (a.state === 'fly' && a.e.kind === 'gate' && a.z < a.zHit && (!gate || a.z > gate.z)) gate = a;
+  if (gate && (gate.zHit - gate.z) / 6 < gateLead) { any = true; hx = gate.x + gateMiss; hy = gate.y; }
   if (any) hold = { hx, hy, until: T + holdS };
   else if (T < hold.until) { hx = hold.hx; hy = hold.hy; }
   // głowa przesuwa się płynnie, nie skokiem (ok. 3 m/s)
