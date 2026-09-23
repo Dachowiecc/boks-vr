@@ -38,6 +38,7 @@
   <div><b>Full Workout:</b> all five drills in a row with short rests, like a real class. Endless drills stop after 60 seconds.</div>
   <div class="prof"><b>Players:</b> <input id="name1" maxlength="12" placeholder="PLAYER 1"> <input id="name2" maxlength="12" placeholder="PLAYER 2">
     <button id="p1">PLAY AS 1</button> <button id="p2">PLAY AS 2</button> <span id="pnow"></span></div>
+  <div><b>Quit a round:</b> hold A, B, X or Y on a controller (Esc on desktop).</div>
   <div><b>Desktop:</b> left / right mouse button or F / J for left / right hand (hold to block in Don't Get Hit). C to duck, A / D to slip.</div>
   <button id="start">COMBOS</button> <button id="startBalls">BALL MACHINE</button> <button id="startBag">POWER BAG</button> <button id="startLine">SLIP LINE</button> <button id="startWorkout">FULL WORKOUT</button> <button id="startDef">DON'T GET HIT</button>
   <div id="err"></div>
@@ -686,7 +687,7 @@ function drawHUD() {
   }
   if (state === 'menu') {
     g.fillStyle = '#ffd23f'; g.font = `400 120px ${BANG}`; g.fillText('ANA BOXING GYM', w / 2, 120);
-    g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`; g.fillText(vr ? 'Punch a target to pick a mode' : 'Pick a mode in the panel on the left', w / 2, 200);
+    g.fillStyle = '#fff4dc'; g.font = `bold 34px ${SANS}`; g.fillText(vr ? 'Punch a target to pick a mode · hold A, B, X or Y to quit' : 'Pick a mode in the panel on the left · Esc quits a round', w / 2, 200);
     drawRankBar(g, w, 256);
     if (!rm.ready || !cm.ready) { g.fillStyle = '#ffb13d'; g.font = `bold 26px ${SANS}`; g.fillText('Loading trainer and rival...', w / 2, 30); }
   } else if (state === 'end' && mode === 'line') {
@@ -2409,6 +2410,34 @@ for (let i = 0; i < 2; i++) {
   hands.push(h);
   gloveSlots.push({ get side() { return h.side; }, get: () => h.glove, set: g => { h.glove = g; } });
 }
+// ---------- wyjście z rundy: przytrzymaj A, B, X albo Y (na komputerze Esc) ----------
+const QUIT_HOLD = 0.8;
+let quitHold = 0;
+const quitTex = p => canvasTex(512, 128, (g, w, h) => {
+  g.fillStyle = 'rgba(20,16,14,.9)'; g.beginPath(); g.roundRect(4, 4, w - 8, h - 8, 24); g.fill();
+  g.fillStyle = '#ff5a4a'; g.fillRect(24, h - 34, (w - 48) * p, 14);
+  g.fillStyle = '#fff4dc'; g.font = `400 58px ${BANG}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('HOLD TO QUIT', w / 2, 50);
+}, 'quit' + Math.round(p * 10));
+const quitSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: quitTex(0), transparent: true, depthTest: false, fog: false }));
+quitSprite.renderOrder = 30; quitSprite.visible = false; quitSprite.scale.set(0.4, 0.1, 1); quitSprite.position.set(0, -0.12, -0.6); camera.add(quitSprite);
+function quitToMenu() {
+  quitHold = 0; quitSprite.visible = false;
+  workout = null; state = 'menu'; menuArmAt = nowS() + 0.8;
+  for (const a of active) scene.remove(a.obj); active.length = 0;
+  clearPunches(); counterTgt.visible = false; bigText.visible = false; slowT = 0;
+  if (!renderer.xr.isPresenting) document.getElementById('info').style.display = '';
+  try { speechSynthesis.cancel(); } catch (e) { /* brak syntezy mowy */ }
+  trainerSay('Take a breath. Pick a drill when you are ready.', true); drawHUD();
+}
+function updateQuit(dt) {
+  const inRound = state === 'countdown' || state === 'fight' || (state === 'end' && workout && !workout.done);
+  let held = keys.has('escape');
+  for (const h of hands) { const b = h.has && h.src && h.src.gamepad && h.src.gamepad.buttons; if (b && ((b[4] && b[4].pressed) || (b[5] && b[5].pressed))) held = true; }
+  if (!inRound || !held) { quitHold = 0; quitSprite.visible = false; return; }
+  quitHold += dt; quitSprite.visible = true;
+  const p = Math.min(1, quitHold / QUIT_HOLD); quitSprite.material.map = quitTex(p);
+  if (p >= 1) quitToMenu();
+}
 function updateHands(dt) {
   for (const h of hands) {
     if (!h.has) continue;
@@ -2514,7 +2543,7 @@ function frame(dt, draw = true) {
   camera.getWorldPosition(head);
   updateHands(dt);
   if (state === 'countdown') updateCountdown();
-  updateWorkout();
+  updateWorkout(); updateQuit(dt);
   updateMenu(dt);
   // po rundzie rywal znika, gdy wraca menu (inaczej animacja zwycięstwa wchodzi graczowi w twarz)
   showRival(mode === 'defense' && state !== 'menu' && !(state === 'end' && nowS() > menuArmAt + 1.3));
