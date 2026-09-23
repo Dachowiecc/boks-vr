@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Podgląd animacji</title>
+<style>html,body{margin:0;background:#222}</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+// Podgląd: model z Meshy (szkielet Mixamo) + animacja z Mixamo (FBX bez skóry).
+// __test(model, anim, klatki) zapisuje paski klatek z przodu i z boku do test/zrzuty przez odbior.py.
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+
+const W = 360, H = 480;
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H); document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x3a3a44);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.2));
+const grid = new THREE.GridHelper(4, 8, 0x666666, 0x555555); scene.add(grid);
+const cam = new THREE.PerspectiveCamera(35, W / H, 0.1, 50);
+
+const models = {}, anims = {};
+async function model(name) {
+  if (!models[name]) models[name] = name.endsWith('.fbx') ? await new FBXLoader().loadAsync(`/assets/models/${name}`).then(g => ({ scene: g })) : await new GLTFLoader().loadAsync(`/assets/models/${name}.glb?t=${Date.now()}`);
+  return models[name];
+}
+async function anim(name) {
+  if (!anims[name]) anims[name] = await new FBXLoader().loadAsync(`/assets/anim/${name}.fbx`);
+  return anims[name];
+}
+// Mixamo trzyma pozycję bioder w centymetrach, model z Meshy w metrach: skalujemy ścieżkę pozycji
+function retarget(clip, scale) {
+  const c = clip.clone();
+  for (const t of c.tracks) if (t.name.endsWith('.position')) for (let i = 0; i < t.values.length; i++) t.values[i] *= scale;
+  return c;
+}
+window.__test = async (mName, aName, times = [0, 0.2, 0.35, 0.5, 0.7, 0.9]) => {
+  const gltf = await model(mName), fbx = await anim(aName);
+  const root = gltf.scene; scene.add(root);
+  const hips = root.getObjectByName('mixamorigHips');
+  // model w centymetrach (Mixamo FBX): zmniejszamy do metrów
+  root.scale.setScalar(1); root.updateMatrixWorld(true); if (hips.getWorldPosition(new THREE.Vector3()).y > 10) root.scale.setScalar(0.01);
+  const fHips = fbx.getObjectByName('mixamorigHips');
+  const clip = fbx.animations[0];
+  // skala: wysokość bioder w pozie spoczynkowej modelu wobec pierwszej klatki animacji
+  const hipTrack = clip.tracks.find(t => t.name === 'mixamorigHips.position');
+  const scale = hipTrack ? hips.position.y / hipTrack.values[1] : 0.01;
+  const mixer = new THREE.AnimationMixer(root);
+  const act = mixer.clipAction(retarget(clip, scale)); act.play();
+  // kadr według kości bioder (ramka siatki ze szkieletem bywa błędna)
+  root.updateMatrixWorld(true);
+  const hw = hips.getWorldPosition(new THREE.Vector3()), c = new THREE.Vector3(hw.x, 0.85, hw.z), h = 1.7;
+  const shots = [];
+  for (const view of ['front', 'side']) for (const f of times) {
+    mixer.setTime(f * clip.duration);
+    if (view === 'front') cam.position.set(c.x, c.y + 0.15, c.z + h * 2.1); else cam.position.set(c.x + h * 2.1, c.y + 0.15, c.z);
+    cam.lookAt(c.x, c.y, c.z); renderer.render(scene, cam);
+    shots.push(renderer.domElement.toDataURL('image/jpeg', 0.8));
+  }
+  scene.remove(root); mixer.stopAllAction();
+  // sklejanie w jeden obraz: rząd przód, rząd bok
+  const cv = document.createElement('canvas'); cv.width = W * times.length; cv.height = H * 2; const g = cv.getContext('2d');
+  await Promise.all(shots.map((s, i) => new Promise(r => { const im = new Image(); im.onload = () => { g.drawImage(im, (i % times.length) * W, Math.floor(i / times.length) * H); r(); }; im.src = s; })));
+  g.fillStyle = '#fff'; g.font = '22px sans-serif'; g.fillText(`${mName} + ${aName} (${clip.duration.toFixed(2)} s, skala ${scale.toFixed(4)})`, 10, 26);
+  await fetch(`http://127.0.0.1:8147/anim-${mName}-${aName}.jpg`, { method: 'POST', body: cv.toDataURL('image/jpeg', 0.8) });
+  return { dur: clip.duration, scale, tracks: clip.tracks.length, sample: clip.tracks.slice(0, 3).map(t => t.name) };
+};
+
+// pomiar ciosu: kiedy pięść jest najdalej od bioder (chwila trafienia) i gdzie wtedy jest względem stóp modelu
+window.__impact = async (mName, aName, bone) => {
+  const gltf = await model(mName), fbx = await anim(aName);
+  const root = gltf.scene; scene.add(root);
+  const hips = root.getObjectByName('mixamorigHips'), hand = root.getObjectByName(bone);
+  const clip = fbx.animations[0], hipTrack = clip.tracks.find(t => t.name === 'mixamorigHips.position');
+  const scale = hipTrack ? hips.position.y / hipTrack.values[1] : 0.01;
+  const mixer = new THREE.AnimationMixer(root); mixer.clipAction(retarget(clip, scale)).play();
+  let best = null; const v = new THREE.Vector3(), rest = new THREE.Vector3();
+  mixer.setTime(0); root.updateMatrixWorld(true); hand.getWorldPosition(rest);
+  for (let i = 0; i <= 120; i++) {
+    const t = clip.duration * i / 120; mixer.setTime(t); root.updateMatrixWorld(true); hand.getWorldPosition(v);
+    if (!best || v.z > best.p.z) best = { t, p: v.clone() };
+  }
+  scene.remove(root); mixer.stopAllAction();
+  const r = x => Math.round(x * 1000) / 1000;
+  return { dur: r(clip.duration), impact: r(best.t), at: [r(best.p.x), r(best.p.y), r(best.p.z)], rest: [r(rest.x), r(rest.y), r(rest.z)], height: r(new THREE.Box3().setFromObject(root).max.y) };
+};
+
+// dopasowanie rękawicy do kości dłoni: basis = [x, y, z] osi rękawicy w układzie kości, off = przesunięcie wzdłuż kości
+window.__glove = async (aName, t, basis, off = 0.05, size = 0.26, name = 'rekawica') => {
+  const gltf = await model('rywal'), fbx = await anim(aName), gm = await model('rekawica-biala');
+  const root = gltf.scene; scene.add(root);
+  const hips = root.getObjectByName('mixamorigHips');
+  const clip = fbx.animations[0], ht = clip.tracks.find(x => x.name === 'mixamorigHips.position');
+  const mixer = new THREE.AnimationMixer(root); mixer.clipAction(retarget(clip, ht ? hips.position.y / ht.values[1] : 0.01)).play();
+  const box = new THREE.Box3().setFromObject(gm.scene), gs = box.getSize(new THREE.Vector3()), gc = box.getCenter(new THREE.Vector3());
+  const added = [];
+  for (const s of ['L', 'R']) {
+    const n = s === 'L' ? 'Left' : 'Right', handBone = root.getObjectByName(`mixamorig${n}Hand`), fore = root.getObjectByName(`mixamorig${n}ForeArm`);
+    handBone.scale.setScalar(0.001);
+    const hand = new THREE.Group(); hand.position.copy(handBone.position); fore.add(hand);
+    const g = gm.scene.clone(true); g.position.sub(gc);
+    const inner = new THREE.Group(); inner.add(g);
+    const B = basis.map(v => new THREE.Vector3(...v));
+    const cfg = (window.__gcfg || {})[s] || (s === 'R' ? { neg: 1, mir: 1 } : { neg: 0, mir: 0 });
+    if (cfg.neg) { B[0].x *= -1; B[1].x *= -1; B[2].x *= -1; }
+    if (cfg.flipY) { B[0].y *= -1; B[1].y *= -1; B[2].y *= -1; }
+    inner.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(...B));
+    if (cfg.mir) inner.scale.x = -1;
+    const holder = new THREE.Group(); holder.add(inner); hand.add(holder);
+    root.updateMatrixWorld(true);
+    const ws = hand.getWorldScale(new THREE.Vector3()).x;
+    holder.scale.setScalar(size / Math.max(gs.x, gs.y, gs.z) / ws); holder.position.set(0, off / ws, 0);
+    added.push(holder);
+  }
+  mixer.setTime(t); root.updateMatrixWorld(true);
+  const lh = root.getObjectByName('mixamorigLeftHand').getWorldPosition(new THREE.Vector3()), rh = root.getObjectByName('mixamorigRightHand').getWorldPosition(new THREE.Vector3());
+  const mid = lh.clone().add(rh).multiplyScalar(0.5);
+  const shots = [];
+  for (const [dx, dz] of [[0, 1.3], [1.1, 0.3]]) {
+    cam.position.set(mid.x + dx, mid.y + 0.15, mid.z + dz); cam.lookAt(mid); renderer.render(scene, cam);
+    shots.push(renderer.domElement.toDataURL('image/jpeg', 0.85));
+  }
+  for (const h of added) h.parent.remove(h);
+  scene.remove(root); mixer.stopAllAction();
+  const cv = document.createElement('canvas'); cv.width = W * 2; cv.height = H; const g2 = cv.getContext('2d');
+  await Promise.all(shots.map((u, i) => new Promise(r => { const im = new Image(); im.onload = () => { g2.drawImage(im, i * W, 0); r(); }; im.src = u; })));
+  await fetch(`http://127.0.0.1:8147/${name}.jpg`, { method: 'POST', body: cv.toDataURL('image/jpeg', 0.85) });
+  return name;
+};
+
+// rękawica na kości dłoni postaci z Mixamo (palce zaciśnięte przez animację): basis jak w __glove, cfg per ręka
+window.__glove2 = async (mName, aName, t, basis, off = 0.04, size = 0.27, name = 'rg-brute') => {
+  const gltf = await model(mName), fbx = await anim(aName), gm = await model('rekawica-biala');
+  const root = gltf.scene; scene.add(root); root.scale.setScalar(1); root.updateMatrixWorld(true);
+  const hips = root.getObjectByName('mixamorigHips'); if (hips.getWorldPosition(new THREE.Vector3()).y > 10) root.scale.setScalar(0.01);
+  root.traverse(o => { if (o.isMesh && /Axe/i.test(o.name)) o.visible = false; });
+  const clip = fbx.animations[0], ht = clip.tracks.find(x => x.name === 'mixamorigHips.position');
+  const mixer = new THREE.AnimationMixer(root); mixer.clipAction(retarget(clip, ht ? hips.position.y / ht.values[1] : 0.01)).play();
+  const box = new THREE.Box3().setFromObject(gm.scene), gs = box.getSize(new THREE.Vector3()), gc = box.getCenter(new THREE.Vector3());
+  const added = [];
+  for (const s of ['L', 'R']) {
+    const hand = root.getObjectByName(`mixamorig${s === 'L' ? 'Left' : 'Right'}Hand`);
+    hand.scale.setScalar(window.__handScale || 1);
+    const g = gm.scene.clone(true); g.position.sub(gc);
+    const inner = new THREE.Group(); inner.add(g);
+    const B = basis.map(v => new THREE.Vector3(...v));
+    const cfg = (window.__gcfg || {})[s] || {};
+    if (cfg.neg) for (const v of B) v.x *= -1;
+    if (cfg.negZ) for (const v of B) v.z *= -1;
+    inner.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(...B));
+    if (cfg.mir) inner.scale.x = -1;
+    const holder = new THREE.Group(); holder.add(inner); hand.add(holder);
+    root.updateMatrixWorld(true);
+    const ws = hand.getWorldScale(new THREE.Vector3()).x;
+    holder.scale.setScalar(size / Math.max(gs.x, gs.y, gs.z) / ws); holder.position.set(0, off / ws, 0);
+    added.push(holder);
+  }
+  mixer.setTime(t); root.updateMatrixWorld(true);
+  const lh = root.getObjectByName('mixamorigLeftHand').getWorldPosition(new THREE.Vector3()), rh = root.getObjectByName('mixamorigRightHand').getWorldPosition(new THREE.Vector3());
+  const mid = lh.clone().add(rh).multiplyScalar(0.5);
+  const shots = [];
+  for (const [dx, dz] of [[0, 1.4], [1.2, 0.3]]) { cam.position.set(mid.x + dx, mid.y + 0.15, mid.z + dz); cam.lookAt(mid); renderer.render(scene, cam); shots.push(renderer.domElement.toDataURL('image/jpeg', 0.85)); }
+  for (const h of added) h.parent.remove(h);
+  scene.remove(root); mixer.stopAllAction();
+  const cv = document.createElement('canvas'); cv.width = W * 2; cv.height = H; const g2 = cv.getContext('2d');
+  await Promise.all(shots.map((u, i) => new Promise(r => { const im = new Image(); im.onload = () => { g2.drawImage(im, i * W, 0); r(); }; im.src = u; })));
+  await fetch(`http://127.0.0.1:8147/${name}.jpg`, { method: 'POST', body: cv.toDataURL('image/jpeg', 0.85) });
+  return name;
+};
+</script>
+</body>
+</html>

@@ -22,6 +22,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
@@ -29,7 +30,10 @@ const log = (...a) => { document.getElementById('log').textContent += a.join(' '
 const TEX = 1024;
 
 async function shrinkTexture(tex) {
-  if (!tex || !tex.image) return tex;
+  if (!tex) return tex;
+  // FBX ładuje obrazy asynchronicznie: czekamy do 5 s, pusty obraz pomijamy
+  for (let i = 0; i < 50 && !(tex.image && (tex.image.width || tex.image.naturalWidth)); i++) await new Promise(r => setTimeout(r, 100));
+  if (!tex.image || !(tex.image.width || tex.image.naturalWidth)) return null;
   const img = tex.image, s = Math.min(1, TEX / Math.max(img.width, img.height));
   const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
@@ -60,17 +64,29 @@ function simplify(geo, targetTris) {
   return g;
 }
 
-async function process(name, { targetTris = 0, skinned = false } = {}) {
+async function process(name, { targetTris = 0, skinned = false, fbx = false, drop = [] } = {}) {
   const t0 = performance.now();
-  const gltf = await new GLTFLoader().loadAsync(`/assets/models/${name}.raw.glb`);
+  const gltf = fbx ? await new FBXLoader().loadAsync(`/assets/models/${name}.raw.fbx`).then(g => ({ scene: g, animations: [] })) : await new GLTFLoader().loadAsync(`/assets/models/${name}.raw.glb`);
   let before = 0, after = 0;
   const jobs = [];
+  // z FBX: wycięte siatki (np. broń) i siatki z kilkoma materiałami (zostaje pierwsza grupa, zwykle skóra)
+  // Mixamo FBX: kość-dziecko o tej samej nazwie co rodzic; eksporter przemianowałby prawdziwą kość
+  if (fbx) gltf.scene.traverse(o => { if (o.isBone && o.parent && o.parent.name === o.name) o.name += '_dup'; });
+  if (drop.length) { const rm = []; gltf.scene.traverse(o => { if (o.isMesh && drop.includes(o.name)) rm.push(o); }); for (const o of rm) o.parent.remove(o); }
+  gltf.scene.traverse(o => {
+    if (!o.isMesh || !Array.isArray(o.material) || o.geometry.groups.length < 2 || o.geometry.index) return;
+    const g0 = o.geometry.groups[0], ng = new THREE.BufferGeometry();
+    for (const [k, at] of Object.entries(o.geometry.attributes)) ng.setAttribute(k, new THREE.BufferAttribute(at.array.slice(g0.start * at.itemSize, (g0.start + g0.count) * at.itemSize), at.itemSize, at.normalized));
+    o.geometry = ng; o.material = o.material[g0.materialIndex];
+  });
   gltf.scene.traverse(o => {
     if (!o.isMesh) return;
     before += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
     if (targetTris && (!o.isSkinnedMesh || skinned)) o.geometry = simplify(o.geometry, targetTris);
     after += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
+    // z FBX bierzemy tylko kolor: gra cieniuje kreskówkowo i innych map nie używa
+    if (fbx) for (const m of mats) for (const k of ['normalMap', 'specularMap', 'bumpMap', 'emissiveMap', 'aoMap', 'lightMap', 'alphaMap', 'displacementMap']) m[k] = null;
     for (const m of mats) for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {
       if (m[k]) jobs.push(shrinkTexture(m[k]).then(t => { m[k] = t; }));
     }

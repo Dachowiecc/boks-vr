@@ -1767,23 +1767,30 @@ function deskBagPunch(side) {
 // Model ma szkielet Mixamo, klipy są z Mixamo (FBX bez skóry). Moment trafienia i zasięg każdego klipu zmierzone
 // w test/anim-podglad.html (__impact). Ramię jest docelowane w głowę gracza jedną kością (korekta kierunku barku),
 // a trafienie i blok liczą się z pozycji prawdziwej dłoni modelu, czyli gracz unika tego, co widzi.
+// Rywal: postać „Brute” z Mixamo (profesjonalny szkielet z palcami, animacje zaciskają pięści).
+// Czas trafienia i zasięg zmierzone w test/anim-podglad.html (__impact) i przeliczone na metry przy wysokości 1,83 m.
+const BRUTE_NORM = 1.83 / 1.91;
 const RCLIP = {
-  jab: { file: 'mx_jab', hand: 'L', ti: 0.477, reach: 1.28 },
-  cross: { file: 'mx_cross', hand: 'R', ti: 0.676, reach: 1.28 },
-  hookL: { file: 'mx_hook_l', hand: 'L', ti: 0.5, reach: 0.88 },
-  hookR: { file: 'mx_hook_r', hand: 'R', ti: 0.776, reach: 0.95 },
-  upperL: { file: 'mx_upper_l', hand: 'L', ti: 0.88, reach: 0.945 },
-  upperR: { file: 'mx_upper_r', hand: 'R', ti: 0.715, reach: 0.99 },
+  jab: { file: 'mx_jab', hand: 'L', ti: 0.491, reach: 1.509 },
+  cross: { file: 'mx_cross', hand: 'R', ti: 0.676, reach: 1.532 },
+  hookL: { file: 'mx_hook_l', hand: 'L', ti: 0.5, reach: 1.151 },
+  hookR: { file: 'mx_hook_r', hand: 'R', ti: 0.74, reach: 1.133 },
+  upperL: { file: 'mx_upper_l', hand: 'L', ti: 0.862, reach: 1.168 },
+  upperR: { file: 'mx_upper_r', hand: 'R', ti: 0.715, reach: 1.2 },
 };
 const RIDLE = ['mx_idle_stance', 'mx_hit_head_l', 'mx_hit_head_r', 'mx_taunt', 'mx_victory'];
-const RDIST = 1.22;
+const RDIST = 1.46;
 const rm = { ready: false, root: null, mixer: null, acts: {}, bones: {}, cur: null, stepZ: 0, stepTo: 0, aim: { L: 0, R: 0 }, target: new THREE.Vector3() };
 async function loadRival() {
   const { FBXLoader } = await import('three/addons/loaders/FBXLoader.js');
-  const gltf = await new GLTFLoader().loadAsync('assets/models/rywal.glb');
-  const root = gltf.scene, hips = root.getObjectByName('mixamorigHips');
-  const meshes = []; root.traverse(o => { if (o.isMesh) { meshes.push(o); o.frustumCulled = false; } });
-  for (const o of meshes) o.material = new THREE.MeshToonMaterial({ map: o.material.map, gradientMap: GRAD });
+  const root = await new FBXLoader().loadAsync('assets/models/brute.fbx'), hips = root.getObjectByName('mixamorigHips');
+  root.scale.setScalar(0.01 * BRUTE_NORM); // FBX z Mixamo jest w centymetrach
+  const meshes = [], drop = [];
+  root.traverse(o => { if (o.isMesh) { if (/Axe/i.test(o.name)) drop.push(o); else { meshes.push(o); o.frustumCulled = false; } } });
+  for (const o of drop) o.parent.remove(o);
+  // tylko kolor, cieniowanie kreskówkowe; mapy normalnych i połysku zwalniamy z pamięci
+  const toonOf = m => { for (const k of ['normalMap', 'specularMap', 'bumpMap']) if (m[k]) m[k].dispose(); return new THREE.MeshToonMaterial({ map: m.map, gradientMap: GRAD, transparent: m.transparent, alphaTest: m.transparent ? 0.3 : 0 }); };
+  for (const o of meshes) o.material = Array.isArray(o.material) ? o.material.map(toonOf) : toonOf(o.material);
   const mixer = new THREE.AnimationMixer(root);
   const fl = new FBXLoader(), files = [...new Set([...Object.values(RCLIP).map(c => c.file), ...RIDLE])];
   const clips = {};
@@ -1801,8 +1808,8 @@ async function loadRival() {
   for (const s of ['L', 'R']) {
     const n = s === 'L' ? 'Left' : 'Right';
     rm.bones[s] = { arm: root.getObjectByName(`mixamorig${n}Arm`), hand: root.getObjectByName(`mixamorig${n}Hand`), fore: root.getObjectByName(`mixamorig${n}ForeArm`) };
-    // szkielet z Meshy nie ma kości palców: otwartą dłoń zwijamy do zera, rękawica siedzi na przedramieniu w miejscu nadgarstka
-    rm.bones[s].hand.scale.setScalar(0.001);
+    // pięść (zaciśnięta przez animację) lekko mniejsza, żeby cała schowała się w rękawicy
+    rm.bones[s].hand.scale.setScalar(0.75);
   }
   rm.look = prepLook(root);
   rm.root = root; rm.mixer = mixer; rm.meshes = meshes;
@@ -1817,29 +1824,23 @@ function loadRivalGloves() {
     const src = gltf.scene;
     src.traverse(o => { if (o.isMesh) o.material = new THREE.MeshToonMaterial({ map: o.material.map, color: 0xffffff, gradientMap: GRAD }); });
     const box = new THREE.Box3().setFromObject(src), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+    rm.root.updateMatrixWorld(true);
     for (const s of ['L', 'R']) {
       const g = src.clone(true), holder = new THREE.Group(), inner = new THREE.Group();
       g.position.sub(c); inner.add(g);
-      // układ rękawicy z pliku -> przedramię Mixamo (+Y wzdłuż ręki); lewa i prawa dobrane na zrzutach (test/anim-podglad.html, __glove)
+      // układ rękawicy z pliku -> kość dłoni Mixamo (+Y wzdłuż palców); lewa i prawa dobrane na zrzutach (test/anim-podglad.html, __glove2)
       const B = [new THREE.Vector3(0, -1, 0), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1)];
       if (s === 'R') for (const v of B) v.x *= -1;
       inner.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(...B));
       inner.scale.x = -1;
-      holder.add(inner); holder.userData.size = Math.max(size.x, size.y, size.z);
-      const wrist = new THREE.Group(); wrist.position.copy(rm.bones[s].hand.position); rm.bones[s].fore.add(wrist); wrist.add(holder);
-      rm.bones[s].glove = holder; rm.bones[s].wrist = wrist;
+      holder.add(inner); rm.bones[s].hand.add(holder);
+      const ws = rm.bones[s].hand.getWorldScale(new THREE.Vector3()).x / Math.max(1e-6, rival.scale.x);
+      holder.scale.setScalar(0.34 / Math.max(size.x, size.y, size.z) / ws); holder.position.set(0, 0.08 / ws, 0);
+      rm.bones[s].glove = holder;
     }
-    fitRivalGloves();
   });
 }
-function fitRivalGloves() {
-  for (const s of ['L', 'R']) {
-    const h = rm.bones[s].glove; if (!h) continue;
-    const ws = rm.bones[s].wrist.getWorldScale(new THREE.Vector3()).x;
-    h.scale.setScalar(0.26 / h.userData.size / ws);
-    h.position.set(0, 0.06 / ws, 0);
-  }
-}
+function fitRivalGloves() { /* rękawice siedzą na kościach dłoni i skalują się razem z rywalem */ }
 function rPlay(name, fade = 0.12, ts = 1) {
   const a = rm.acts[name]; if (!a) return;
   const prev = rm.acts[rm.cur];
