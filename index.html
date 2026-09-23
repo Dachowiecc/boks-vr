@@ -13,7 +13,7 @@
   #info { position:fixed; left:16px; top:16px; max-width:min(420px, calc(100vw - 64px)); background:rgba(20,16,14,.82); border:2px solid var(--accent); padding:14px 16px; border-radius:10px; font-size:14px; line-height:1.5; z-index:5; }
   #info h1 { margin:0 0 6px; font-family:Bangers, Impact, sans-serif; font-weight:400; letter-spacing:1px; font-size:34px; color:var(--accent); }
   #info b { color:var(--accent); }
-  #start, #startDef { margin-top:10px; background:var(--red); color:#fff; border:2px solid #111; border-radius:8px; padding:10px 18px; font:400 22px Bangers, Impact, sans-serif; letter-spacing:1px; cursor:pointer; }
+  #start, #startDef, #startBalls { margin-top:10px; background:var(--red); color:#fff; border:2px solid #111; border-radius:8px; padding:10px 18px; font:400 22px Bangers, Impact, sans-serif; letter-spacing:1px; cursor:pointer; }
   #err { color:#ff8a80; white-space:pre-wrap; font-size:12px; }
 </style>
 <script type="importmap">
@@ -30,8 +30,9 @@
   <div><b>Combos:</b> red pads are your left hand (L), blue pads your right (R). Numbers are boxing calls: 1 jab, 2 cross, 3 lead hook, 4 rear hook, 5 lead uppercut, 6 rear uppercut.</div>
   <div><b>Orange bar:</b> roll under it. <b>Yellow wall:</b> slip your head the way the arrow points.</div>
   <div><b>Don't Get Hit:</b> your rival throws punches, slow at first, then faster. Slip, duck or block with your gloves. Five clean hits and you're out.</div>
+  <div><b>Ball Machine:</b> the machine shoots tennis balls at your head. Yellow: slip or duck. Red: punch it. Three at once: roll under them. Every 10 balls the level goes up.</div>
   <div><b>Desktop:</b> left / right mouse button or F / J for left / right hand (hold to block in Don't Get Hit). C to duck, A / D to slip.</div>
-  <button id="start">COMBOS ON DESKTOP</button> <button id="startDef">DON'T GET HIT ON DESKTOP</button>
+  <button id="start">COMBOS</button> <button id="startBalls">BALL MACHINE</button> <button id="startDef">DON'T GET HIT</button>
   <div id="err"></div>
 </div>
 <script>
@@ -597,11 +598,25 @@ const hudC = document.createElement('canvas'); hudC.width = 1024; hudC.height = 
 const hudG = hudC.getContext('2d'), hudTex = new THREE.CanvasTexture(hudC); hudTex.colorSpace = THREE.SRGBColorSpace;
 const hud = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.69), new THREE.MeshBasicMaterial({ map: hudTex, transparent: true, fog: false }));
 hud.position.set(0, 2.6, -3.6); scene.add(hud);
+// przy maszynie tablica wisi z boku, żeby tło za lufą było spokojne i piłkę było widać od wylotu
+function placeHUD() {
+  if (mode === 'balls' && state !== 'menu') { hud.position.set(base.x - 1.9, 2.25, base.z - 3.2); hud.rotation.set(0, 0.5, 0); }
+  else { hud.position.set(0, 2.6, -3.6); hud.rotation.set(0, 0, 0); }
+}
+// winieta zwolnienia czasu
+const slowTex = canvasTex(256, 256, (g, w) => {
+  const gr = g.createRadialGradient(w / 2, w / 2, w * 0.22, w / 2, w / 2, w * 0.5);
+  gr.addColorStop(0, 'rgba(40,120,255,0)'); gr.addColorStop(1, 'rgba(30,70,200,.85)');
+  g.fillStyle = gr; g.fillRect(0, 0, w, w);
+}, 'slow');
+const slowVig = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.6), new THREE.MeshBasicMaterial({ map: slowTex, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false }));
+slowVig.renderOrder = 19; slowVig.position.set(0, 0, -0.5); slowVig.visible = false; camera.add(slowVig);
 const bigText = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex('3'), transparent: true, depthTest: false, fog: false }));
 bigText.renderOrder = 15; bigText.visible = false; scene.add(bigText);
 
-const bestOf = { combo: 0, defense: 0 };
-try { bestOf.combo = +localStorage.getItem('ana-best') || 0; bestOf.defense = +localStorage.getItem('ana-best-def') || 0; } catch (e) { /* bez zapisu */ }
+const bestOf = { combo: 0, defense: 0, balls: 0 };
+const BEST_KEY = { combo: 'ana-best', defense: 'ana-best-def', balls: 'ana-best-balls' };
+try { for (const m in BEST_KEY) bestOf[m] = +localStorage.getItem(BEST_KEY[m]) || 0; } catch (e) { /* bez zapisu */ }
 function hearts(g, x, y, n, of) {
   for (let i = 0; i < of; i++) {
     const cx = x + (i - (of - 1) / 2) * 62;
@@ -620,6 +635,12 @@ function drawHUD() {
   if (state === 'menu') {
     g.fillStyle = '#ffd23f'; g.font = `400 120px ${BANG}`; g.fillText('ANA BOXING GYM', w / 2, 120);
     g.fillStyle = '#fff4dc'; g.font = `bold 44px ${SANS}`; g.fillText(vr ? 'Punch a target to pick a mode' : 'Pick a mode in the panel on the left', w / 2, 236);
+  } else if (state === 'end' && mode === 'balls') {
+    g.fillStyle = '#ff5a4a'; g.font = `400 88px ${BANG}`; g.fillText('THE MACHINE WINS', w / 2, 70);
+    g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`;
+    g.fillText(`Level ${bLevel} · Slipped ${BS.slipped} · Smashed ${BS.smashed} · Close ${BS.close}`, w / 2, 160);
+    g.fillText(`Score ${score} · Best streak ${maxCombo} · Best ${bestOf.balls}`, w / 2, 212);
+    g.fillStyle = '#ffd23f'; g.fillText(vr ? 'Punch a target to go again' : 'Pick a mode to go again', w / 2, 272);
   } else if (state === 'end' && mode === 'defense') {
     g.fillStyle = '#ff5a4a'; g.font = `400 88px ${BANG}`; g.fillText('KNOCKED OUT', w / 2, 70);
     g.fillStyle = '#fff4dc'; g.font = `bold 40px ${SANS}`;
@@ -633,6 +654,15 @@ function drawHUD() {
     g.fillText(`Score ${score} · Best combo ${maxCombo} · Accuracy ${acc}%`, w / 2, 160);
     g.fillText(`Dodges ${dodgeOk}/${dodgeSeen} · Best ${bestOf.combo}`, w / 2, 212);
     g.fillStyle = '#ffd23f'; g.fillText(vr ? 'Punch a target to go again' : 'Pick a mode to go again', w / 2, 272);
+  } else if (mode === 'balls') {
+    g.fillStyle = '#fff4dc'; g.font = `bold 34px ${SANS}`;
+    g.fillText('SCORE', 180, 70); g.fillText('LIVES', w / 2, 70); g.fillText('LEVEL', w - 180, 70);
+    g.fillStyle = '#ffd23f'; g.font = `400 110px ${BANG}`;
+    g.fillText(String(score), 180, 170); g.fillText(String(bLevel), w - 180, 170);
+    hearts(g, w / 2, 165, lives, 5);
+    g.fillStyle = '#fff4dc'; g.font = `bold 32px ${SANS}`;
+    g.fillText(`${LEVEL_NAMES[Math.min(bLevel, LEVEL_NAMES.length) - 1]} · Streak ${combo} · x${mult()}`, w / 2, 250);
+    g.fillStyle = '#3a312a'; g.fillRect(60, 280, w - 120, 14); g.fillStyle = '#ff7a1a'; g.fillRect(60, 280, (w - 120) * Math.min(1, bLevelShots / SHOTS_PER_LEVEL), 14);
   } else if (mode === 'defense') {
     g.fillStyle = '#fff4dc'; g.font = `bold 34px ${SANS}`;
     g.fillText('SCORE', 180, 70); g.fillText('LIVES', w / 2, 70); g.fillText('SPEED', w - 180, 70);
@@ -678,8 +708,9 @@ function startCountdown(m = lastMode) {
   score = combo = maxCombo = hits = misses = padsSeen = dodgeOk = dodgeSeen = 0;
   lives = 5; thrown = dodged = blocked = taken = 0; comboName = comboWords = '';
   rival.visible = mode === 'defense';
+  if (mode === 'balls') resetBalls();
   state = 'countdown'; cdStart = nowS();
-  trainerSay(mode === 'defense' ? 'Hands up and move your head!' : 'Show me those fists!', true); drawHUD();
+  trainerSay(mode === 'defense' ? 'Hands up and move your head!' : mode === 'balls' ? 'Yellow ball: slip it. Red ball: smash it!' : 'Show me those fists!', true); drawHUD();
 }
 function updateCountdown() {
   const e = nowS() - cdStart, n = 3 - Math.floor(e);
@@ -692,28 +723,32 @@ function updateCountdown() {
     chart = mode === 'combo' ? (window.__testChart ? window.__testChart() : buildChart()) : [];
     startTime = aNow() + 0.05; bell(actx.currentTime, 1);
     if (mode === 'defense') { placeRival(); nextPunchAt = aNow() + 1.2; }
+    if (mode === 'balls') startBalls();
     state = 'fight';
   }
 }
 function endRound() {
   state = 'end'; bell(actx.currentTime, 3); menuArmAt = nowS() + 1.2;
   if (!renderer.xr.isPresenting) document.getElementById('info').style.display = '';
-  const key = mode === 'defense' ? 'ana-best-def' : 'ana-best';
+  const key = BEST_KEY[mode];
   const rec = score > bestOf[mode];
   if (rec) { bestOf[mode] = score; try { localStorage.setItem(key, String(score)); } catch (e) { /* bez zapisu */ } }
-  if (mode === 'defense') {
+  if (mode === 'balls') {
+    popWord('GAME OVER', new THREE.Vector3(head.x, head.y + 0.1, head.z - 1.6), '#ff5a4a', 2.6, 1.8); flashSpeedLines();
+    trainerSay(rec ? `New record! Level ${bLevel}, not bad at all!` : `Level ${bLevel}. Eyes on the machine next time!`, true);
+  } else if (mode === 'defense') {
     popWord('K.O.', new THREE.Vector3(head.x, head.y + 0.1, head.z - 1.6), '#ff5a4a', 3, 1.8); flashSpeedLines();
     trainerSay(rec ? 'New record! You lasted longer than ever!' : 'Get up, kid. Again!', true);
   } else trainerSay(rec ? 'New record! Great work, kid!' : 'Good round. Again tomorrow!', true);
   drawHUD();
 }
 function scheduleMusic() {
-  const ahead = aNow() + 0.25, lastIdx = mode === 'defense' ? Infinity : (ROUND_BARS + 1) * 8;
+  const ahead = aNow() + 0.25, lastIdx = mode !== 'combo' ? Infinity : (ROUND_BARS + 1) * 8;
   while (nextBeat < lastIdx) {
     const t = startTime + nextBeat * BEAT / 2;
     if (t > ahead) break;
     const bar = Math.floor(nextBeat / 8), pos = nextBeat % 8;
-    if ((bar < ROUND_BARS || mode === 'defense') && vnow === null) {
+    if ((bar < ROUND_BARS || mode !== 'combo') && vnow === null) {
       if (pos % 2 === 0) kick(t);
       if (bar >= 2 && (pos === 2 || pos === 6)) snare(t);
       hat(t, pos % 2 === 1);
@@ -952,12 +987,341 @@ function updateRivalIdle() {
 }
 function showRival(v) { rival.visible = v; for (const s of ['L', 'R']) { rGloves[s].visible = v; rArms[s].visible = v; } }
 
+// ---------- tryb BALL MACHINE: maszyna strzela piłkami, gracz robi uniki i kontruje ----------
+// Żółta piłka leci w głowę: slip w bok albo zejście w dół. Czerwona leci na wysokość klatki: uderz ją.
+// Trzy żółte naraz w poziomym wachlarzu: w bok się nie da, trzeba zejść pod nie.
+const BALL_R = 0.034, BALL_G = 4.9, HEAD_R = 0.15, BM_DIST = 2.9, SHOTS_PER_LEVEL = 10;
+function ballTex(base, seam) {
+  return canvasTex(256, 128, (g, w, h) => {
+    g.fillStyle = base; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 700; i++) { g.fillStyle = i % 2 ? 'rgba(255,255,255,.16)' : 'rgba(0,0,0,.08)'; g.fillRect(Math.random() * w, Math.random() * h, 2, 2); }
+    g.strokeStyle = seam; g.lineWidth = 9; g.beginPath();
+    for (let x = 0; x <= w; x += 4) { const y = h / 2 + Math.sin(x / w * Math.PI * 4) * h * 0.3; if (x) g.lineTo(x, y); else g.moveTo(x, y); }
+    g.stroke();
+  }, 'ball' + base);
+}
+const BALL_GEO = new THREE.SphereGeometry(BALL_R, 18, 12);
+const BALL_MAT = { y: toonMat(0xffffff, ballTex('#d9f53a', '#fbfff0')), r: toonMat(0xffffff, ballTex('#ff3b2f', '#fff4dc')) };
+const GHOST_MAT = { y: new THREE.MeshBasicMaterial({ color: 0xeaff6a, transparent: true, opacity: 0.35, depthWrite: false, fog: false }), r: new THREE.MeshBasicMaterial({ color: 0xff6a4a, transparent: true, opacity: 0.35, depthWrite: false, fog: false }) };
+const ringTex = canvasTex(128, 128, (g, w) => {
+  g.strokeStyle = '#fff'; g.lineWidth = 12; g.beginPath(); g.arc(w / 2, w / 2, w / 2 - 10, 0, Math.PI * 2); g.stroke();
+}, 'ring');
+
+// maszyna: skrzynie jako podest, obudowa z lufą; obraca się za głową gracza, lufa świeci przed strzałem
+const bm = new THREE.Group(); bm.visible = false; scene.add(bm);
+const bmAim = new THREE.Group(); bm.add(bmAim);
+const bmMuzzle = new THREE.Object3D(); bmAim.add(bmMuzzle);
+const bmBody = new THREE.Group(); bmAim.add(bmBody);
+const bmStand = new THREE.Group();
+let bmLegs = null;
+let bmGlow, bmHopper = [];
+function buildMachine() {
+  // metalowy wózek pod maszyną; blat na y = 0.7, nogi skalowane w pionie do maty ringu (y = 0)
+  bm.add(bmStand); bmStand.position.y = 0.7;
+  const steel = 0x4a5563, dark = 0x2a2f38;
+  put(toon(new THREE.BoxGeometry(0.9, 0.05, 1.15), steel, { outline: 0.012 }), 0, -0.025, 0, bmStand);
+  const legs = new THREE.Group(); bmStand.add(legs); bmLegs = legs;
+  const legGeo = new THREE.BoxGeometry(0.05, 1, 0.05);
+  for (const [x, z] of [[-0.4, -0.52], [0.4, -0.52], [-0.4, 0.52], [0.4, 0.52]]) put(toon(legGeo, dark, { outline: 0.008 }), x, -0.5, z, legs);
+  put(toon(new THREE.BoxGeometry(0.86, 0.035, 1.1), steel, { outline: 0.01 }), 0, -0.72, 0, legs);
+  // wiadro z zapasem piłek na dolnej półce
+  const bucket = toon(new THREE.CylinderGeometry(0.16, 0.13, 0.22, 16), 0x2d7ff9, { outline: 0.01 });
+  put(bucket, 0.18, -0.6, 0.15, legs);
+  for (let i = 0; i < 6; i++) put(new THREE.Mesh(BALL_GEO, BALL_MAT.y), 0.18 + Math.cos(i) * 0.08, -0.47 + (i % 2) * 0.03, 0.15 + Math.sin(i) * 0.08, legs).scale.setScalar(1.3);
+  const sh = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.6), blobMat); sh.rotation.x = -Math.PI / 2; sh.renderOrder = 1; bm.add(sh); bmShadow = sh;
+  bmAim.position.set(0, 0.9, 0);
+  // obudowa, pas, lufa, kosz z piłkami, kółka
+  put(toon(new THREE.BoxGeometry(0.56, 0.36, 0.62), 0xff7a1a, { outline: 0.016 }), 0, 0, 0, bmBody);
+  put(toon(new THREE.BoxGeometry(0.57, 0.07, 0.63), 0xf4f1e8, { outline: 0 }), 0, 0.05, 0, bmBody);
+  const barrel = new THREE.CylinderGeometry(0.1, 0.12, 0.32, 20); barrel.rotateX(Math.PI / 2);
+  put(toon(barrel, 0x2a2a2e, { outline: 0.012 }), 0, -0.02, 0.4, bmBody);
+  const mouth = new THREE.CircleGeometry(0.075, 20);
+  put(new THREE.Mesh(mouth, new THREE.MeshBasicMaterial({ color: 0x050505, fog: false })), 0, -0.02, 0.561, bmBody);
+  bmGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.36), new THREE.MeshBasicMaterial({ map: ringTex, color: 0xffd23f, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+  put(bmGlow, 0, -0.02, 0.57, bmBody);
+  const hop = new THREE.CylinderGeometry(0.26, 0.18, 0.22, 16, 1, true);
+  const hopM = toon(hop, 0xf4f1e8, { outline: 0.012 }); hopM.material = hopM.material.clone(); hopM.material.side = THREE.DoubleSide;
+  put(hopM, 0, 0.29, -0.05, bmBody);
+  for (let i = 0; i < 14; i++) {
+    const a = i * 2.4, r = 0.05 + (i % 3) * 0.06;
+    const b = put(new THREE.Mesh(BALL_GEO, BALL_MAT.y), Math.cos(a) * r, 0.3 + (i % 2) * 0.05, -0.05 + Math.sin(a) * r, bmBody);
+    b.scale.setScalar(1.4); bmHopper.push(b);
+  }
+  const wheel = new THREE.CylinderGeometry(0.09, 0.09, 0.05, 16); wheel.rotateZ(Math.PI / 2);
+  for (const x of [-0.3, 0.3]) put(toon(wheel, 0x1a1a1a, { outline: 0.008 }), x, -0.17, -0.2, bmBody);
+  bmMuzzle.position.set(0, -0.02, 0.58);
+}
+let bmShadow = null;
+function placeMachine() {
+  // wylot lufy trochę poniżej oczu gracza, piłka leci lekkim łukiem
+  bm.position.set(base.x + bmSlide, Math.max(0.1, base.y - 0.2 - 0.88), base.z - BM_DIST);
+  bmLegs.scale.y = Math.max(0.3, bm.position.y + 0.7);
+  bmShadow.position.y = -bm.position.y + 0.008;
+}
+// wczytany model z Meshy zastępuje obudowę z brył (lufa i poświata zostają z kodu)
+new GLTFLoader().load('assets/models/maszyna.glb', (gltf) => {
+  const m = gltf.scene;
+  // w pliku lufa patrzy w -X; obrót o 90 stopni kieruje ją w +Z, czyli na gracza
+  m.rotation.y = Math.PI / 2; m.updateMatrixWorld(true);
+  let box = new THREE.Box3().setFromObject(m);
+  const size = box.getSize(new THREE.Vector3()), s = 1.15 / Math.max(size.x, size.z);
+  m.scale.setScalar(s); m.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(m);
+  const c = box.getCenter(new THREE.Vector3());
+  m.position.set(-c.x, -box.min.y - 0.18, -c.z); m.updateMatrixWorld(true);
+  const meshes = []; m.traverse(o => { if (o.isMesh) meshes.push(o); });
+  // wylot lufy: średnia wierzchołków w ostatnich 4 cm od przodu modelu
+  const v = new THREE.Vector3(), tip = new THREE.Vector3(); let n = 0, maxZ = -Infinity;
+  for (const o of meshes) { const pa = o.geometry.attributes.position; for (let i = 0; i < pa.count; i++) { v.fromBufferAttribute(pa, i).applyMatrix4(o.matrixWorld); if (v.z > maxZ) maxZ = v.z; } }
+  for (const o of meshes) { const pa = o.geometry.attributes.position; for (let i = 0; i < pa.count; i++) { v.fromBufferAttribute(pa, i).applyMatrix4(o.matrixWorld); if (v.z > maxZ - 0.04) { tip.add(v); n++; } } }
+  tip.divideScalar(Math.max(1, n));
+  for (const o of meshes) { o.material = new THREE.MeshToonMaterial({ map: o.material.map, gradientMap: GRAD }); o.add(outlineOf(o.geometry, 0.01 / s)); }
+  for (const ch of [...bmBody.children]) if (ch !== bmGlow) ch.visible = false;
+  bmBody.add(m);
+  bmMuzzle.position.set(tip.x, tip.y, maxZ + 0.02);
+  bmGlow.position.copy(bmMuzzle.position); bmGlow.scale.setScalar(0.8);
+}, undefined, () => { /* bez modelu zostaje maszyna z brył */ });
+
+let bLevel = 1, bLevelShots = 0, bLevelHits = 0, bQueue = [], bNextAt = 0, bBreakUntil = 0, bmSlide = 0, bmSlideTo = 0;
+let slowT = 0, slowCool = 0, gTime = 0, bCharge = null, bGuardRow = 0;
+const balls = [];
+const BS = { fired: 0, slipped: 0, smashed: 0, blocked: 0, taken: 0, close: 0, missedRed: 0 };
+const bSpeed = () => Math.min(12, 3.8 + (bLevel - 1) * 0.9);
+const bTele = () => Math.max(0.28, 0.85 * Math.pow(0.86, bLevel - 1));
+const bGap = () => Math.max(0.2, 1.05 * Math.pow(0.85, bLevel - 1));
+// wzory strzałów: dx, dy względem głowy w chwili strzału, dt = opóźnienie po poprzednim strzale (s)
+const PATTERNS = {
+  single: () => [{ k: 'y', dx: 0, dy: 0 }],
+  side: () => { const s = Math.random() < 0.5 ? -1 : 1; return [{ k: 'y', dx: s * 0.09, dy: 0 }]; },
+  red: () => [{ k: 'r', dx: (Math.random() < 0.5 ? -1 : 1) * 0.16, dy: -0.28 }],
+  counter: () => { const s = Math.random() < 0.5 ? -1 : 1; return [{ k: 'y', dx: s * 0.08, dy: 0 }, { k: 'r', dx: -s * 0.12, dy: -0.28, dt: 0.55 }]; },
+  double: () => { const s = Math.random() < 0.5 ? -1 : 1; return [{ k: 'y', dx: s * 0.09, dy: 0 }, { k: 'y', dx: -s * 0.09, dy: 0, dt: 0.6 }]; },
+  spread: () => [{ k: 'y', dx: -0.24, dy: 0.02, spread: 1 }, { k: 'y', dx: 0, dy: 0, dt: 0, spread: 1 }, { k: 'y', dx: 0.24, dy: 0.02, dt: 0, spread: 1 }],
+  rapid: () => { const s = Math.random() < 0.5 ? -1 : 1; return [{ k: 'y', dx: s * 0.09, dy: 0 }, { k: 'y', dx: -s * 0.09, dy: 0, dt: 0.45 }, { k: 'r', dx: s * 0.12, dy: -0.28, dt: 0.45 }]; },
+};
+const LEVEL_POOL = [
+  ['single', 'single', 'side'],
+  ['single', 'side', 'side', 'red'],
+  ['side', 'red', 'counter', 'counter'],
+  ['side', 'counter', 'double', 'red'],
+  ['side', 'counter', 'double', 'spread'],
+  ['counter', 'double', 'spread', 'rapid', 'side'],
+];
+const LEVEL_NAMES = ['WARM UP', 'READ THE BALL', 'SLIP AND RIP', 'BOTH WAYS', 'UNDER THE STORM', 'NO MERCY'];
+function resetBalls() {
+  for (const b of balls) { scene.remove(b.obj); for (const gh of b.ghosts) scene.remove(gh); }
+  balls.length = 0; bQueue = []; bCharge = null; slowT = 0; slowCool = 0; bGuardRow = 0;
+  bLevel = 1; bLevelShots = 0; bLevelHits = 0; bmSlide = bmSlideTo = 0; bBreakUntil = 0; bNextAt = 0; gTime = 0;
+  for (const k in BS) BS[k] = 0;
+  if (bmGlow) bmGlow.material.opacity = 0;
+}
+function queuePattern(t0) {
+  const pool = LEVEL_POOL[Math.min(bLevel, LEVEL_POOL.length) - 1];
+  const shots = PATTERNS[pick(pool)]();
+  let t = t0;
+  const group = Math.random();
+  for (const s of shots) { t += s.dt === undefined ? 0 : s.dt * Math.max(0.6, Math.pow(0.93, bLevel - 1)); bQueue.push({ ...s, at: t, group }); }
+  return t;
+}
+function sfxCharge(dur) {
+  if (!actx || vnow !== null) return;
+  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'triangle'; o.frequency.setValueAtTime(260, t); o.frequency.exponentialRampToValueAtTime(900, t + dur);
+  g.gain.setValueAtTime(0.001, t); g.gain.exponentialRampToValueAtTime(0.12, t + dur * 0.9); g.gain.exponentialRampToValueAtTime(0.001, t + dur + 0.05);
+  o.connect(g).connect(master); o.start(t); o.stop(t + dur + 0.1);
+}
+const sfxLaunch = () => { if (!actx) return; const t = actx.currentTime; tone(t, 'sine', 120, 45, 0.7, 0.18); noise(t, 0.09, 'lowpass', 900, 0.5); };
+function sfxPass(pan) {
+  if (!actx) return;
+  const t = actx.currentTime, src = actx.createBufferSource(), f = actx.createBiquadFilter(), p = actx.createStereoPanner(), g = actx.createGain();
+  src.buffer = noiseBuf; f.type = 'bandpass'; f.Q.value = 1.4;
+  f.frequency.setValueAtTime(3200, t); f.frequency.exponentialRampToValueAtTime(600, t + 0.3);
+  p.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), t);
+  g.gain.setValueAtTime(0.001, t); g.gain.exponentialRampToValueAtTime(0.7, t + 0.06); g.gain.exponentialRampToValueAtTime(0.001, t + 0.36);
+  src.connect(f).connect(p).connect(g).connect(master); src.start(t); src.stop(t + 0.4);
+}
+function fireBall(s) {
+  const P0 = bmMuzzle.getWorldPosition(new THREE.Vector3());
+  const T = head.clone().add(new THREE.Vector3(s.dx, s.dy, s.k === 'r' ? -0.45 : 0));
+  const tf = P0.distanceTo(T) / (s.k === 'r' ? bSpeed() * 0.8 : bSpeed());
+  const v = T.clone().sub(P0).sub(new THREE.Vector3(0, -0.5 * BALL_G * tf * tf, 0)).divideScalar(tf);
+  const obj = new THREE.Mesh(BALL_GEO, BALL_MAT[s.k]); obj.add(outlineOf(BALL_GEO, 0.006)); obj.position.copy(P0);
+  obj.scale.setScalar(s.k === 'r' ? 1.5 : 1.25);
+  if (s.k === 'r') {
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: burstTex, color: 0xff5a3a, transparent: true, depthWrite: false, fog: false }));
+    halo.scale.set(0.16, 0.16, 1); obj.add(halo); obj.userData.halo = halo;
+  }
+  scene.add(obj);
+  const ghosts = [];
+  for (let i = 0; i < 4; i++) { const gh = new THREE.Mesh(BALL_GEO, GHOST_MAT[s.k]); gh.scale.setScalar((1.1 - i * 0.18) * obj.scale.x); gh.position.copy(P0); scene.add(gh); ghosts.push(gh); }
+  balls.push({ k: s.k, obj, ghosts, hist: [], v, pos: P0.clone(), prev: P0.clone(), t: 0, tf, state: 'fly', spread: !!s.spread, group: s.group, dx: s.dx, slowed: false });
+  BS.fired++; bLevelShots++;
+  popBurst(P0.clone().add(new THREE.Vector3(0, 0, 0.1)), 0.9);
+  if (Math.random() < 0.5) popWord(pick(['PON!', 'ポン!', 'THOOM!']), P0.clone().add(new THREE.Vector3(0.35, 0.25, 0)), '#fff4dc', 0.7, 0.45, new THREE.Vector3(0, 0.3, 0));
+  sfxLaunch();
+}
+function ballGone(b, i) {
+  scene.remove(b.obj); for (const gh of b.ghosts) scene.remove(gh);
+  balls.splice(i, 1);
+}
+function ballResolve(b, res, gl) {
+  b.state = res; hudDirty = true;
+  if (res === 'slip' || res === 'smash') bGuardRow = 0;
+  const at = new THREE.Vector3(head.x, head.y + 0.18, head.z - 0.7);
+  if (res === 'hit') {
+    BS.taken++; bLevelHits++; lives--; combo = 0;
+    popWord(pick(['OUCH!', 'BONK!', 'ゴン!']), at, '#ff5a4a', 1.5); sfxOuch(); sfxHit(4);
+    flashT = 0.35; hitFlash.visible = true;
+    for (const h of hands) if (h.has) buzz(h, 1, 140);
+    trainerSay(b.spread ? 'Three balls? Get UNDER them!' : pick(['Eyes on the machine!', 'Move your head, not your feet!', 'Slip earlier!']));
+    b.v.set((Math.random() - 0.5) * 2, 2.5, -3); b.life = 1;
+    if (lives <= 0) { endRound(); return; }
+  } else if (res === 'slip') {
+    BS.slipped++; combo++; maxCombo = Math.max(maxCombo, combo);
+    const close = b.minD < 0.205;
+    if (close) BS.close++;
+    score += Math.round((100 + (close ? 60 : 0)) * mult());
+    popWord(close ? pick(['CLOSE!', 'WHOOSH!', 'NICE SLIP!']) : pick(['SLIP!', 'DODGE!']), at, close ? '#ffd23f' : '#7dff8a', close ? 1.3 : 1);
+    sfxPass(b.pos.x - head.x > 0 ? 1 : -1);
+    b.life = 0.6;
+  } else if (res === 'smash') {
+    BS.smashed++; combo++; maxCombo = Math.max(maxCombo, combo);
+    const sp = gl && gl.h ? gl.h.vel.length() : 4;
+    score += Math.round((150 + Math.min(100, sp * 15)) * mult());
+    popBurst(b.pos.clone(), sp > 4 ? 1.5 : 1.1);
+    popWord(sp > 4.2 ? pick(['SMASH!', 'ドン!']) : pick(['POW!', 'BAM!']), b.pos.clone().add(new THREE.Vector3(0, 0.2, -0.1)), sp > 4.2 ? '#ffd23f' : '#fff', sp > 4.2 ? 1.4 : 1.1);
+    sfxHit(Math.max(3, sp)); if (gl && gl.h) buzz(gl.h, Math.min(1, 0.4 + sp / 6), 70);
+    if (sp > 4.2) flashSpeedLines();
+    // piłka odlatuje z powrotem w stronę maszyny
+    const dir = gl && gl.h && sp > 0.5 ? gl.h.vel.clone().normalize() : new THREE.Vector3(0, 0.3, -1).normalize();
+    b.v.copy(dir.multiplyScalar(6 + sp * 2)).add(new THREE.Vector3(0, 1.5, 0)); b.life = 1.4;
+  } else if (res === 'block') {
+    // zablokowanie rękawicą ratuje życie, ale kasuje serię: ten dryl uczy ruchu głową
+    BS.blocked++; score += 20; combo = 0; bGuardRow++;
+    b.v.set(b.v.x * -0.2 + (Math.random() - 0.5) * 2, 2, -b.v.z * 0.3); b.life = 0.8;
+    if (bGuardRow >= 3) {
+      // trzeci blok z rzędu przebija gardę: ręce nie zastąpią ruchu głową
+      bGuardRow = 0; BS.taken++; bLevelHits++; lives--;
+      popWord('GUARD BREAK!', at, '#ff5a4a', 1.4); sfxOuch(); flashT = 0.3; hitFlash.visible = true;
+      trainerSay('Three blocks in a row breaks your guard. Slip!', true);
+      if (lives <= 0) { endRound(); return; }
+      return;
+    }
+    popWord(bGuardRow === 2 ? 'GUARD CRACKING' : 'BLOCK', at, bGuardRow === 2 ? '#ffb13d' : '#7dd3ff', 0.9); if (BS.blocked % 3 === 1) trainerSay(pick(["Don't block it, slip it!", 'Move the head, keep the hands free!'])); sfxHit(2); if (gl && gl.h) buzz(gl.h, 0.6, 50);
+  } else if (res === 'late') {
+    BS.missedRed++; combo = 0;
+    popWord('TOO LATE', new THREE.Vector3(head.x, head.y - 0.2, head.z - 0.8), '#bbbbbb', 0.8, 0.5);
+    trainerSay(pick(['Red ball, hit it!', 'Punch the red one!', 'Counter! Counter!']));
+    b.life = 0.5;
+  }
+  if (combo > 0 && combo % 10 === 0 && (res === 'slip' || res === 'smash')) {
+    popWord(`STREAK ${combo}!`, new THREE.Vector3(head.x, head.y + 0.4, head.z - 1.8), '#ffd23f', 1.6, 1); flashSpeedLines();
+    trainerSay(pick(['Beautiful head movement!', 'Like water, kid!', 'That machine cannot touch you!']), true);
+  }
+}
+function levelUp() {
+  const clean = bLevelHits === 0;
+  if (clean) { score += 500 * bLevel; popWord('CLEAN LEVEL +' + 500 * bLevel, new THREE.Vector3(head.x, head.y + 0.05, head.z - 1.6), '#7dff8a', 1.3, 1.4); }
+  bLevel++; bLevelShots = 0; bLevelHits = 0;
+  const name = LEVEL_NAMES[Math.min(bLevel, LEVEL_NAMES.length) - 1];
+  popWord('LEVEL ' + bLevel, new THREE.Vector3(head.x, head.y + 0.35, head.z - 2), '#ffd23f', 2.4, 1.6, new THREE.Vector3(0, 0.05, 0));
+  popWord(name, new THREE.Vector3(head.x, head.y - 0.05, head.z - 2), '#fff4dc', 1.5, 1.6, new THREE.Vector3(0, 0.03, 0));
+  bell(actx.currentTime, 1); flashSpeedLines();
+  trainerSay(bLevel === 3 ? 'Red balls now come after a slip. Slip, then rip!' : bLevel === 5 ? 'Three at once: roll under them!' : bLevel === 4 ? 'Now both ways. Left, right!' : pick(['Faster now!', 'Stay loose!', 'Here it comes!']), true);
+  bBreakUntil = gTime + 1.8;
+  if (bLevel >= 4) bmSlideTo = (Math.random() < 0.5 ? -1 : 1) * 0.9;
+}
+function startBalls() {
+  resetBalls(); gTime = 0; bNextAt = 1.2; placeMachine();
+}
+function updateBalls(dt) {
+  // zwolnienie czasu przy bliskim minięciu (gra zwalnia, dźwięk i ruch gracza nie)
+  if (slowT > 0) slowT -= dt;
+  if (slowCool > 0) slowCool -= dt;
+  const gdt = dt * (slowT > 0 ? 0.3 : 1);
+  gTime += gdt;
+  // maszyna przesuwa się w bok między seriami i obraca za głową
+  bmSlide += (bmSlideTo - bmSlide) * Math.min(1, gdt * 1.5);
+  bm.position.x = base.x + bmSlide;
+  tmpA.copy(head); bm.worldToLocal(tmpA); tmpA.sub(bmAim.position);
+  const yaw = Math.atan2(tmpA.x, tmpA.z), pitch = -Math.atan2(tmpA.y, Math.hypot(tmpA.x, tmpA.z));
+  bmAim.rotation.y += (yaw - bmAim.rotation.y) * Math.min(1, gdt * 6);
+  bmAim.rotation.x += (pitch - bmAim.rotation.x) * Math.min(1, gdt * 6);
+  // kolejka strzałów
+  if (state === 'fight') {
+    if (!bQueue.length && gTime >= bNextAt && gTime >= bBreakUntil && balls.every(b => b.state !== 'fly')) {
+      if (bLevelShots >= SHOTS_PER_LEVEL) levelUp();
+      else {
+        const t0 = gTime + bTele();
+        const tEnd = queuePattern(t0);
+        bNextAt = tEnd + bGap();
+        if (bLevel >= 4 && Math.random() < 0.35) bmSlideTo = (Math.random() - 0.5) * 1.8;
+      }
+    }
+    if (bQueue.length) {
+      const s = bQueue[0], tele = bTele();
+      if (!bCharge && gTime >= s.at - tele) { bCharge = s; sfxCharge(tele / (slowT > 0 ? 0.3 : 1)); }
+      if (bCharge) bmGlow.material.opacity = Math.min(1, 1 - (s.at - gTime) / tele);
+      if (gTime >= s.at) {
+        bQueue.shift(); fireBall(s); bCharge = null; bmGlow.material.opacity = 0;
+        bmAim.position.z = -0.06; // odrzut
+      }
+    }
+  }
+  bmAim.position.z += (0 - bmAim.position.z) * Math.min(1, gdt * 10);
+  if (bmGlow) bmGlow.scale.setScalar(1 + (bCharge ? Math.sin(gTime * 40) * 0.08 : 0));
+  // lot piłek
+  const gls = playerGloves();
+  for (let i = balls.length - 1; i >= 0; i--) {
+    const b = balls[i];
+    b.prev.copy(b.pos);
+    b.v.y -= BALL_G * gdt; b.pos.addScaledVector(b.v, gdt); b.t += gdt;
+    b.obj.position.copy(b.pos); b.obj.rotation.x += gdt * 20; b.obj.rotation.y += gdt * 7;
+    b.hist.unshift(b.pos.clone()); if (b.hist.length > 12) b.hist.pop();
+    b.ghosts.forEach((gh, j) => { const p = b.hist[Math.min(b.hist.length - 1, (j + 1) * 2)]; gh.position.copy(p); gh.visible = b.state === 'fly'; });
+    if (b.obj.userData.halo) b.obj.userData.halo.material.rotation += gdt * 4;
+    if (b.state !== 'fly') { b.life -= gdt; if (b.life <= 0) ballGone(b, i); continue; }
+    if (state !== 'fight') { ballGone(b, i); continue; }
+    // rękawica: czerwona zbita, żółta zablokowana
+    for (const gl of gls) {
+      const d = gl.pos.distanceTo(b.pos);
+      if (b.k === 'r' && d < 0.16 && (!gl.h || gl.h.vel.length() > 1.3)) { ballResolve(b, 'smash', gl); break; }
+      if (b.k === 'y' && d < 0.1) { ballResolve(b, 'block', gl); break; }
+    }
+    if (b.state !== 'fly') continue;
+    // odległość od głowy w płaszczyźnie prostopadłej do lotu (najmniejsza w trakcie przelotu)
+    const dz = head.z - b.pos.z;
+    const lat = Math.hypot(b.pos.x - head.x, b.pos.y - head.y);
+    if (dz < 0.6) b.minD = Math.min(b.minD ?? 9, lat);
+    // bliskie minięcie: piłka ominie głowę o włos, więc zwalniamy czas na chwilę
+    if (b.k === 'y' && !b.slowed && dz > 0.15 && dz < 0.75 && slowCool <= 0 && bLevel >= 2) {
+      const tt = dz / Math.max(1, b.v.z), px = b.pos.x + b.v.x * tt - head.x, py = b.pos.y + (b.v.y - 0.5 * BALL_G * tt) * tt - head.y;
+      const pd = Math.hypot(px, py);
+      if (pd > HEAD_R + 0.01 && pd < 0.215) { b.slowed = true; slowT = 0.42; slowCool = 1.2; flashSpeedLines(); if (actx) { tone(actx.currentTime, 'sine', 420, 70, 0.3, 0.5); noise(actx.currentTime, 0.4, 'lowpass', 400, 0.25); } }
+    }
+    if (b.prev.z < head.z && b.pos.z >= head.z) {
+      const u = (head.z - b.prev.z) / Math.max(1e-6, b.pos.z - b.prev.z);
+      const cx = b.prev.x + (b.pos.x - b.prev.x) * u, cy = b.prev.y + (b.pos.y - b.prev.y) * u;
+      const d = Math.hypot(cx - head.x, cy - head.y);
+      b.minD = Math.min(b.minD ?? 9, d);
+      if (d < HEAD_R) ballResolve(b, 'hit');
+      else ballResolve(b, b.k === 'r' ? 'late' : 'slip');
+    } else if (b.t > b.tf + 1.2) ballGone(b, i);
+  }
+}
+function updateMachineIdle(dt) {
+  if (bmGlow) bmGlow.material.opacity = 0;
+  for (let i = balls.length - 1; i >= 0; i--) ballGone(balls[i], i);
+  tmpA.copy(head); bm.worldToLocal(tmpA); tmpA.sub(bmAim.position);
+  bmAim.rotation.y += (Math.atan2(tmpA.x, tmpA.z) - bmAim.rotation.y) * Math.min(1, dt * 3);
+}
+
 // ---------- menu w VR: uderz tarczę, żeby wybrać tryb ----------
 const menuPads = [];
 let menuArmAt = 0;
 function buildMenu() {
   const geo = new THREE.CylinderGeometry(0.17, 0.17, 0.08, 28); geo.rotateX(Math.PI / 2);
-  for (const [m, label, col, x] of [['combo', 'COMBOS', 0xffd23f, -0.28], ['defense', "DON'T GET HIT", 0x7dff8a, 0.28]]) {
+  for (const [m, label, col, x] of [['combo', 'COMBOS', 0xffd23f, -0.4], ['balls', 'BALL MACHINE', 0xff7a1a, 0], ['defense', "DON'T GET HIT", 0x7dff8a, 0.4]]) {
     const g = new THREE.Group();
     g.add(toon(geo, col, { outline: 0.018 }));
     const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex(label, '#fff'), transparent: true, depthTest: false, fog: false }));
@@ -1062,7 +1426,15 @@ function deskPunch(side) {
   hitPad(a, side, PUNCH_DIR[a.e.key].clone().multiplyScalar(5), null);
 }
 const deskGuard = { L: false, R: false };
-function deskDown(side) { if (mode === 'defense' && state === 'fight') deskGuard[side] = true; else deskPunch(side); }
+function deskDown(side) {
+  if (mode === 'balls' && state === 'fight') {
+    deskGuard[side] = true; deskGloves[side === 'L' ? 0 : 1].userData.p = 1;
+    const red = balls.filter(b => b.state === 'fly' && b.k === 'r' && head.z - b.pos.z < 1.3);
+    if (red.length) ballResolve(red.reduce((m, b) => (b.pos.z > m.pos.z ? b : m)), 'smash', null);
+    return;
+  }
+  if (mode === 'defense' && state === 'fight') deskGuard[side] = true; else deskPunch(side);
+}
 renderer.domElement.addEventListener('pointerdown', e => { e.preventDefault(); deskDown(e.button === 2 ? 'R' : 'L'); });
 addEventListener('pointerup', e => { deskGuard[e.button === 2 ? 'R' : 'L'] = false; });
 addEventListener('keydown', e => {
@@ -1073,6 +1445,7 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (k === 'f') deskGuard.L = false; if (k === 'j') deskGuard.R = false; });
 document.getElementById('start').addEventListener('click', () => startCountdown('combo'));
 document.getElementById('startDef').addEventListener('click', () => startCountdown('defense'));
+document.getElementById('startBalls').addEventListener('click', () => startCountdown('balls'));
 function updateDesktop(dt) {
   const duck = keys.has('c') || keys.has(' ') ? -0.35 : 0;
   const lean = (keys.has('d') ? 0.3 : 0) - (keys.has('a') ? 0.3 : 0);
@@ -1087,7 +1460,7 @@ function updateDesktop(dt) {
 }
 
 // ---------- pętla ----------
-buildGym(); buildTrainer(); buildRival(); showRival(false); buildMenu(); trainerSay('Welcome to ANA Boxing Gym!', true); drawHUD();
+buildGym(); buildTrainer(); buildRival(); showRival(false); buildMachine(); buildMenu(); trainerSay('Welcome to ANA Boxing Gym!', true); drawHUD();
 const clock = new THREE.Clock();
 function frame(dt, draw = true) {
   const now = nowS();
@@ -1098,9 +1471,13 @@ function frame(dt, draw = true) {
   updateMenu(dt);
   showRival(mode === 'defense' && state !== 'menu');
   if (mode === 'defense' && (state === 'countdown' || state === 'end')) { if (state === 'countdown') placeRival(); updateRivalIdle(); }
+  bm.visible = mode === 'balls' && state !== 'menu'; placeHUD();
+  slowVig.visible = slowT > 0 && mode === 'balls'; if (slowVig.visible) slowVig.material.opacity = Math.min(1, slowT / 0.15) * 0.55;
+  if (mode === 'balls' && state === 'countdown') { base.copy(head); placeMachine(); }
+  if (mode === 'balls' && state !== 'fight') updateMachineIdle(dt);
   if (state === 'fight') {
     scheduleMusic();
-    if (mode === 'combo') updateChart(); else updateDefense(dt);
+    if (mode === 'combo') updateChart(); else if (mode === 'defense') updateDefense(dt); else updateBalls(dt);
     if (bigText.visible && now - cdStart > 3.6) bigText.visible = false;
     const sec = Math.floor(songTime());
     if (sec !== lastHudSec) { lastHudSec = sec; drawHUD(); }
@@ -1113,7 +1490,9 @@ function frame(dt, draw = true) {
   const dp = dust[0].geometry.attributes.position;
   for (let i = 0; i < dp.count; i++) { let y = dp.getY(i) + dt * 0.05; if (y > 3) y = -1; dp.setY(i, y); }
   dp.needsUpdate = true;
-  if (draw) renderer.render(scene, camera); else scene.updateMatrixWorld();
+  // window.__noDraw przyspiesza testy: logika bez rysowania
+  if (draw && !window.__noDraw) renderer.render(scene, camera);
+  else { if (renderer.xr.isPresenting) renderer.xr.updateCamera(camera); scene.updateMatrixWorld(); }
 }
 let updateHUDCount = 0;
 let manualFrames = false, lastV = null;
@@ -1123,7 +1502,7 @@ renderer.setAnimationLoop(() => {
   if (!manualFrames) frame(dt);
 });
 window.__game = { get state() { return state; }, get score() { return score; }, get combo() { return combo; }, get active() { return active.length; }, list: active, camera, startCountdown, frame,
-  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken }), punches, menuPads, rGloves, makeGlove, scene };
+  setVirtual(t, manual = true) { vnow = t; manualFrames = t !== null && manual; if (t === null) lastV = null; }, hands, base, get chart() { return chart; }, get presenting() { return renderer.xr.isPresenting; }, stats: () => ({ state, mode, score, combo, maxCombo, hits, misses, padsSeen, dodgeOk, dodgeSeen, lives, thrown, dodged, blocked, taken, level: bLevel, ball: { ...BS } }), punches, menuPads, rGloves, makeGlove, scene, balls, BS, get level() { return bLevel; }, get lives() { return lives; }, get slow() { return slowT; }, bm, bmMuzzle, placeMachine };
 </script>
 </body>
 </html>

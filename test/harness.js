@@ -122,3 +122,55 @@ export function punchMenu(i, side = 'R') {
   }
   return G.state;
 }
+
+// ---------- Ball Machine ----------
+// style: 'dodge' czyta lot piłki jak człowiek (reaguje po `react` s od strzału), 'wrong' robi unik w stronę piłki,
+// 'idle' stoi z opuszczonymi rękami, 'guard' trzyma rękawice przed twarzą. punch = czy zbija czerwone piłki.
+let lastSide = 1;
+export function ballsStep(style = 'dodge', { react = 0.25, punch = true, headSpeed = 3 } = {}) {
+  let tx = 0, ty = 1.6;
+  const fly = G.balls.filter(b => b.state === 'fly');
+  if (style === 'dodge' || style === 'wrong') {
+    const ys = fly.filter(b => b.k === 'y' && b.t > react);
+    if (ys.length) {
+      const b = ys.reduce((m, x) => (x.pos.z > m.pos.z ? x : m));
+      if (ys.some(x => x.spread)) ty = 1.33;
+      else {
+        const side = Math.abs(b.dx) < 0.01 ? lastSide : -Math.sign(b.dx);
+        lastSide = side;
+        tx = (style === 'wrong' ? -side : side) * 0.22;
+      }
+    }
+  }
+  const dh = [tx - head[0], ty - head[1]], lh = Math.hypot(...dh), mh = headSpeed / 72;
+  const kh = lh > mh ? mh / lh : 1; setHead(head[0] + dh[0] * kh, head[1] + dh[1] * kh);
+  for (const s of ['L', 'R']) {
+    let t = style === 'guard' ? [head[0] + (s === 'L' ? -0.07 : 0.07), head[1] - 0.03, -0.22]
+      : style === 'idle' ? [head[0] + (s === 'L' ? -0.3 : 0.3), head[1] - 0.55, -0.05]
+      : [head[0] + (s === 'L' ? -0.22 : 0.22), head[1] - 0.25, -0.3];
+    if (punch && style !== 'idle') {
+      const red = fly.filter(b => b.k === 'r' && b.pos.z > -1.0 && (b.pos.x < head[0] ? 'L' : 'R') === s);
+      if (red.length) { const b = red[0]; t = [b.pos.x, b.pos.y, b.pos.z]; }
+    }
+    const g = glove[s], dd = t.map((v, i) => v - g[i]), l = Math.hypot(...dd), m = 6 / 72;
+    const k = l > m ? m / l : 1;
+    setGlove(s, g.map((v, i) => v + dd[i] * k));
+  }
+}
+export function runBalls(frames, style, opts) {
+  for (let i = 0; i < frames; i++) { ballsStep(style, opts); pump(1); if (G.state === 'end') break; }
+  return G.stats();
+}
+
+// zrzut z płótna gry do test/zrzuty przez odbior.py (klatka rysowana tuż przed odczytem)
+export async function shot(name) {
+  const was = window.__noDraw; window.__noDraw = false; pump(1); window.__noDraw = was;
+  const c = document.querySelector('canvas');
+  await fetch(`http://127.0.0.1:8147/${name}.jpg`, { method: 'POST', body: c.toDataURL('image/jpeg', 0.85) });
+  return name;
+}
+// gra botem, aż warunek na piłkach będzie spełniony (albo minie limit klatek)
+export function ballsUntil(cond, style = 'dodge', max = 72 * 30, opts) {
+  for (let i = 0; i < max; i++) { ballsStep(style, opts); pump(1); if (cond(G)) return true; if (G.state === 'end') return false; }
+  return false;
+}
