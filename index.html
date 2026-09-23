@@ -1109,7 +1109,7 @@ const LEVEL_POOL = [
 ];
 const LEVEL_NAMES = ['WARM UP', 'READ THE BALL', 'SLIP AND RIP', 'BOTH WAYS', 'UNDER THE STORM', 'NO MERCY'];
 function resetBalls() {
-  for (const b of balls) { scene.remove(b.obj); for (const gh of b.ghosts) scene.remove(gh); }
+  for (const b of balls) { scene.remove(b.obj); scene.remove(b.trail); scene.remove(b.ring); scene.remove(b.shadow); for (const gh of b.ghosts) scene.remove(gh); }
   balls.length = 0; bQueue = []; bCharge = null; slowT = 0; slowCool = 0; bGuardRow = 0;
   bLevel = 1; bLevelShots = 0; bLevelHits = 0; bmSlide = bmSlideTo = 0; bBreakUntil = 0; bNextAt = 0; gTime = 0;
   for (const k in BS) BS[k] = 0;
@@ -1152,16 +1152,62 @@ function fireBall(s) {
     halo.scale.set(0.16, 0.16, 1); obj.add(halo); obj.userData.halo = halo;
   }
   scene.add(obj);
+  // pierścień odliczający czas do przelotu obok głowy i cień na macie: oba mówią „leci do ciebie”
+  const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTex, color: s.k === 'r' ? 0xff6a4a : 0xf2ff6a, transparent: true, opacity: 0, depthWrite: false, fog: false }));
+  ring.renderOrder = 9; scene.add(ring);
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), blobMat); shadow.rotation.x = -Math.PI / 2; shadow.renderOrder = 1; scene.add(shadow);
   const ghosts = [];
   for (let i = 0; i < 4; i++) { const gh = new THREE.Mesh(BALL_GEO, GHOST_MAT[s.k]); gh.scale.setScalar((1.1 - i * 0.18) * obj.scale.x); gh.position.copy(P0); scene.add(gh); ghosts.push(gh); }
-  balls.push({ k: s.k, obj, ghosts, hist: [], v, pos: P0.clone(), prev: P0.clone(), t: 0, tf, state: 'fly', spread: !!s.spread, group: s.group, dx: s.dx, slowed: false });
+  balls.push({ k: s.k, obj, ghosts, ring, shadow, trail: makeTrail(s.k), hist: [], v, pos: P0.clone(), prev: P0.clone(), t: 0, tf, state: 'fly', spread: !!s.spread, group: s.group, dx: s.dx, slowed: false });
   BS.fired++; bLevelShots++;
   popBurst(P0.clone().add(new THREE.Vector3(0, 0, 0.1)), 0.9);
   if (Math.random() < 0.5) popWord(pick(['PON!', 'ポン!', 'THOOM!']), P0.clone().add(new THREE.Vector3(0.35, 0.25, 0)), '#fff4dc', 0.7, 0.45, new THREE.Vector3(0, 0.3, 0));
   sfxLaunch();
 }
+const TRAIL_N = 14;
+function makeTrail(k) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_N * 2 * 3), 3));
+  const col = new Float32Array(TRAIL_N * 2 * 4), c = new THREE.Color(k === 'r' ? 0xff5a3a : 0xf2ff6a);
+  for (let i = 0; i < TRAIL_N; i++) for (let j = 0; j < 2; j++) { const o = (i * 2 + j) * 4; col[o] = c.r; col[o + 1] = c.g; col[o + 2] = c.b; col[o + 3] = 0.85 * Math.pow(1 - i / (TRAIL_N - 1), 1.4); }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+  const idx = [];
+  for (let i = 0; i < TRAIL_N - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  g.setIndex(idx);
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false }));
+  m.frustumCulled = false; m.renderOrder = 8; scene.add(m);
+  return m;
+}
+const trV = new THREE.Vector3(), trS = new THREE.Vector3();
+function updateTrail(b) {
+  const pa = b.trail.geometry.attributes.position, h = b.hist, w0 = BALL_R * b.obj.scale.x * 1.1;
+  for (let i = 0; i < TRAIL_N; i++) {
+    const p = h[Math.min(h.length - 1, i)], q = h[Math.min(h.length - 1, i + 1)];
+    trV.subVectors(p, q); if (trV.lengthSq() < 1e-8) trV.set(0, 0, 1);
+    trS.subVectors(head, p).cross(trV).normalize().multiplyScalar(w0 * (1 - i / TRAIL_N));
+    pa.setXYZ(i * 2, p.x + trS.x, p.y + trS.y, p.z + trS.z); pa.setXYZ(i * 2 + 1, p.x - trS.x, p.y - trS.y, p.z - trS.z);
+  }
+  pa.needsUpdate = true;
+}
+// odłamki filcu przy zbiciu piłki
+const shards = [], SHARD_GEO = new THREE.TetrahedronGeometry(0.012);
+function popShards(pos, k, dir) {
+  for (let i = 0; i < 14; i++) {
+    const m = new THREE.Mesh(SHARD_GEO, k === 'r' ? GHOST_MAT.r : GHOST_MAT.y); m.position.copy(pos); scene.add(m);
+    const v = new THREE.Vector3((Math.random() - 0.5) * 3, Math.random() * 2.5, (Math.random() - 0.5) * 3).add(dir.clone().multiplyScalar(2));
+    shards.push({ m, v, life: 0.5 + Math.random() * 0.3 });
+  }
+}
+function updateShards(dt) {
+  for (let i = shards.length - 1; i >= 0; i--) {
+    const s = shards[i]; s.life -= dt; s.v.y -= 9.8 * dt; s.m.position.addScaledVector(s.v, dt); s.m.rotation.x += dt * 12;
+    if (s.life <= 0) { scene.remove(s.m); shards.splice(i, 1); }
+  }
+}
+// przyrost punktów w miejscu zdarzenia
+function popPoints(n, pos, fill = '#ffd23f') { popWord('+' + n, pos, fill, 1.0, 0.9, new THREE.Vector3(0, 0.45, 0)); }
 function ballGone(b, i) {
-  scene.remove(b.obj); for (const gh of b.ghosts) scene.remove(gh);
+  scene.remove(b.obj); scene.remove(b.trail); scene.remove(b.ring); scene.remove(b.shadow); b.trail.geometry.dispose(); b.ring.material.dispose(); for (const gh of b.ghosts) scene.remove(gh);
   balls.splice(i, 1);
 }
 function ballResolve(b, res, gl) {
@@ -1180,15 +1226,17 @@ function ballResolve(b, res, gl) {
     BS.slipped++; combo++; maxCombo = Math.max(maxCombo, combo);
     const close = b.minD < 0.205;
     if (close) BS.close++;
-    score += Math.round((100 + (close ? 60 : 0)) * mult());
+    const pts = Math.round((100 + (close ? 60 : 0)) * mult()); score += pts;
+    popWord('+' + pts, new THREE.Vector3(b.pos.x + (b.pos.x > head.x ? 0.1 : -0.1), head.y - 0.02, head.z - 0.6), close ? '#ffd23f' : '#7dff8a', 0.5, 0.7, new THREE.Vector3(0, 0.3, 0));
     popWord(close ? pick(['CLOSE!', 'WHOOSH!', 'NICE SLIP!']) : pick(['SLIP!', 'DODGE!']), at, close ? '#ffd23f' : '#7dff8a', close ? 1.3 : 1);
     sfxPass(b.pos.x - head.x > 0 ? 1 : -1);
     b.life = 0.6;
   } else if (res === 'smash') {
     BS.smashed++; combo++; maxCombo = Math.max(maxCombo, combo);
     const sp = gl && gl.h ? gl.h.vel.length() : 4;
-    score += Math.round((150 + Math.min(100, sp * 15)) * mult());
-    popBurst(b.pos.clone(), sp > 4 ? 1.5 : 1.1);
+    const pts = Math.round((150 + Math.min(100, sp * 15)) * mult()); score += pts;
+    popBurst(b.pos.clone(), sp > 4 ? 1.5 : 1.1); popPoints(pts, b.pos.clone().add(new THREE.Vector3(0.12, -0.05, -0.05)));
+    popShards(b.pos, b.k, gl && gl.h ? gl.h.vel.clone().normalize() : new THREE.Vector3(0, 0, -1));
     popWord(sp > 4.2 ? pick(['SMASH!', 'ドン!']) : pick(['POW!', 'BAM!']), b.pos.clone().add(new THREE.Vector3(0, 0.2, -0.1)), sp > 4.2 ? '#ffd23f' : '#fff', sp > 4.2 ? 1.4 : 1.1);
     sfxHit(Math.max(3, sp)); if (gl && gl.h) buzz(gl.h, Math.min(1, 0.4 + sp / 6), 70);
     if (sp > 4.2) flashSpeedLines();
@@ -1271,13 +1319,23 @@ function updateBalls(dt) {
   bmAim.position.z += (0 - bmAim.position.z) * Math.min(1, gdt * 10);
   if (bmGlow) bmGlow.scale.setScalar(1 + (bCharge ? Math.sin(gTime * 40) * 0.08 : 0));
   // lot piłek
+  updateShards(gdt);
   const gls = playerGloves();
   for (let i = balls.length - 1; i >= 0; i--) {
     const b = balls[i];
     b.prev.copy(b.pos);
     b.v.y -= BALL_G * gdt; b.pos.addScaledVector(b.v, gdt); b.t += gdt;
     b.obj.position.copy(b.pos); b.obj.rotation.x += gdt * 20; b.obj.rotation.y += gdt * 7;
-    b.hist.unshift(b.pos.clone()); if (b.hist.length > 12) b.hist.pop();
+    b.hist.unshift(b.pos.clone()); if (b.hist.length > TRAIL_N + 1) b.hist.pop();
+    b.trail.visible = b.state === 'fly' || b.state === 'smash'; if (b.trail.visible) updateTrail(b);
+    b.shadow.position.set(b.pos.x, 0.012, b.pos.z); b.shadow.visible = b.pos.y > 0;
+    const sh = 1 + b.pos.y * 0.25; b.shadow.scale.set(sh, sh, 1);
+    if (b.state === 'fly') {
+      // pierścień: od trzykrotnej średnicy do średnicy piłki w chwili przelotu przez płaszczyznę głowy
+      const left = Math.max(0, (head.z - b.pos.z) / Math.max(0.5, b.v.z)), k = Math.min(1, left / 0.6);
+      const r = BALL_R * b.obj.scale.x * 2 * (1.2 + 2.6 * k);
+      b.ring.position.copy(b.pos); b.ring.scale.set(r * 1.4, r * 1.4, 1); b.ring.material.opacity = Math.min(0.9, b.t * 4) * (left > 0 ? 1 : 0);
+    } else b.ring.material.opacity = 0;
     b.ghosts.forEach((gh, j) => { const p = b.hist[Math.min(b.hist.length - 1, (j + 1) * 2)]; gh.position.copy(p); gh.visible = b.state === 'fly'; });
     if (b.obj.userData.halo) b.obj.userData.halo.material.rotation += gdt * 4;
     if (b.state !== 'fly') { b.life -= gdt; if (b.life <= 0) ballGone(b, i); continue; }
