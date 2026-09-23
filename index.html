@@ -1804,6 +1804,7 @@ async function loadRival() {
     // szkielet z Meshy nie ma kości palców: otwartą dłoń zwijamy do zera, rękawica siedzi na przedramieniu w miejscu nadgarstka
     rm.bones[s].hand.scale.setScalar(0.001);
   }
+  rm.look = prepLook(root);
   rm.root = root; rm.mixer = mixer; rm.meshes = meshes;
   rival.add(root);
   rm.acts.mx_idle_stance.play(); rm.cur = 'mx_idle_stance';
@@ -1916,6 +1917,7 @@ function updateRivalModel(dt) {
   rm.root.position.z = rm.stepZ / rival.scale.x;
   rm.mixer.update(dt);
   rm.root.updateMatrixWorld(true);
+  if (!rm.reactUntil) lookAtPlayer(rm.look, 0.6);
   // docelowanie ramienia w chwili ciosu
   for (const p of punches) {
     if (!p.model) continue;
@@ -2144,6 +2146,7 @@ async function loadCoach() {
     cm.bones[s] = { arm: root.getObjectByName(`mixamorig${n}Arm`), fore: root.getObjectByName(`mixamorig${n}ForeArm`), hand: root.getObjectByName(`mixamorig${n}Hand`) };
     cm.bones[s].hand.scale.setScalar(0.001);
   }
+  cm.look = prepLook(root);
   coach.add(root); cm.root = root;
   await loadMitts();
   cm.pending = true;
@@ -2195,6 +2198,25 @@ function ik2(s, t, pole) {
   const tt = ikA.clone().addScaledVector(ikD, d);
   rotateBoneTo(fore, ikC.clone().sub(ikB).normalize(), tt.sub(ikB).normalize());
 }
+// głowa postaci patrzy na gracza: kierunek „do przodu” głowy zapamiętany w pozie spoczynkowej (model stoi przodem do +z)
+function prepLook(root) {
+  const h = root.getObjectByName('mixamorigHead'); if (!h) return null;
+  root.updateMatrixWorld(true);
+  const q = h.getWorldQuaternion(new THREE.Quaternion()).invert();
+  return { bone: h, fwd: new THREE.Vector3(0, 0, 1).applyQuaternion(q) };
+}
+const lkA = new THREE.Vector3(), lkB = new THREE.Vector3(), lkQ = new THREE.Quaternion();
+function lookAtPlayer(look, amount = 0.7, maxAng = 0.8) {
+  if (!look) return;
+  const { bone, fwd } = look;
+  bone.getWorldQuaternion(lkQ); lkA.copy(fwd).applyQuaternion(lkQ).normalize();
+  bone.getWorldPosition(lkB); lkB.subVectors(head, lkB).normalize();
+  const ang = Math.min(maxAng, lkA.angleTo(lkB)) * amount;
+  if (ang < 1e-3) return;
+  const axis = new THREE.Vector3().crossVectors(lkA, lkB).normalize();
+  const to = lkA.clone().applyAxisAngle(axis, ang);
+  rotateBoneTo(bone, lkA, to);
+}
 const coachOn = () => cm.ready && mode === 'combo' && (state === 'countdown' || state === 'fight');
 function placeCoach() {
   coach.position.set(base.x, 0, base.z - COACH_DIST); coach.rotation.set(0, 0, 0);
@@ -2221,7 +2243,7 @@ function updateCoach(dt) {
   if (!trainer.userData.moved) { trainer.position.set(coach.position.x + 0.75, 0, coach.position.z - 0.2); trainer.rotation.set(0, -0.3, 0); bubbleSprite.position.set(0.2, 2.15, -0.4); bubbleSprite.scale.set(0.8, 0.4, 1); trainer.userData.moved = true; }
   const st = state === 'fight' ? songTime() : -9;
   cm.stepZ += (cm.stepTo - cm.stepZ) * Math.min(1, dt * 8); cm.root.position.z = cm.stepZ / coach.scale.x;
-  cm.mixer.update(dt); cm.root.updateMatrixWorld(true);
+  cm.mixer.update(dt); cm.root.updateMatrixWorld(true); lookAtPlayer(cm.look, 0.8);
   cm.stepTo = 0;
   // spoczynek: łapy przed barkami trenera, lekko do gracza
   for (const s of ['L', 'R']) {
@@ -2244,8 +2266,9 @@ function updateCoach(dt) {
     if (a) {
       const tt = a.e.t - st, k = smooth01(1 - (tt - 0.14) / 0.5);
       // łapa w miejscu ciosu, zwrócona tam, skąd leci pięść
-      mTarget[s].lerpVectors(mRest[s], mTmp.set(a.x, a.y, a.zHit), k);
       mFace[s].copy(PUNCH_DIR[a.e.key]).negate();
+      const meet = 0.05 * Math.max(0, 1 - Math.abs(tt) / 0.12);
+      mTarget[s].lerpVectors(mRest[s], mTmp.set(a.x, a.y, a.zHit).addScaledVector(mFace[s], meet), k);
       a.obj.position.copy(mTarget[s]); a.obj.visible = false;
       setMark(s, a.e.key, k);
       const bm = cm.marks[s].beat; bm.scale.setScalar(1 + 2.2 * Math.max(0, tt) / 0.64); bm.material.opacity = tt > -0.05 ? Math.min(1, k * 1.2) : 0;
