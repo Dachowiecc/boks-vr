@@ -1861,6 +1861,9 @@ const counterTgt = new THREE.Group(); counterTgt.visible = false; scene.add(coun
   counterTgt.add(disc, ring, lab);
 }
 let counterUntil = 0, counters = 0;
+// pierścień ostrzegawczy wokół lecącej rękawicy rywala: kurczy się do chwili trafienia (ten sam język co piłki)
+const punchRing = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTex, color: 0xffd23f, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false }));
+punchRing.renderOrder = 12; punchRing.visible = false; scene.add(punchRing);
 function openCounter() {
   const now = aNow(); counterUntil = now + 0.85;
   counterTgt.position.set(head.x, head.y - 0.06, head.z - 0.5); counterTgt.visible = true;
@@ -1923,10 +1926,15 @@ function updateDefenseM(dt) {
     if (thrown > 12 && Math.random() < 0.35) punches[punches.length - 1].double = true;
     nextPunchAt = Infinity;
   }
-  glint.visible = false;
+  glint.visible = false; punchRing.visible = false;
   for (let i = punches.length - 1; i >= 0; i--) {
     const p = punches[i];
     const hp = rGloves[p.hand].position;
+    if (p.phase === 'fly') {
+      const left = Math.max(0, p.tImpact - now), tot = RCLIP[p.kind].ti / p.ts;
+      punchRing.visible = true; punchRing.position.copy(hp);
+      const r = 0.24 * (1 + 2.2 * left / tot); punchRing.scale.set(r, r, 1); punchRing.material.opacity = Math.min(0.95, (1 - left / tot) * 2);
+    }
     if (p.phase === 'fly') {
       const total = RCLIP[p.kind].ti / p.ts, u = 1 - (p.tImpact - now) / total;
       // błysk nad rękawicą na starcie ciosu: sygnał, która ręka idzie
