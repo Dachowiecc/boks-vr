@@ -29,18 +29,15 @@
 <div id="info">
   <h1>ANA Boxing Gym</h1>
   <div><b>Headset:</b> press ENTER VR below, then punch a target to pick a mode.</div>
-  <div><b>Combos:</b> red pads are your left hand (L), blue pads your right (R). Numbers are boxing calls: 1 jab, 2 cross, 3 lead hook, 4 rear hook, 5 lead uppercut, 6 rear uppercut.</div>
-  <div><b>Orange bar:</b> roll under it. <b>Yellow wall:</b> slip your head the way the arrow points.</div>
   <div><b>Don't Get Hit:</b> your rival throws punches, slow at first, then faster. Slip, duck or block with your gloves. Five clean hits and you're out.</div>
   <div><b>Ball Machine:</b> the machine shoots tennis balls at your head. Yellow: slip or duck. Red: punch it. Three at once: roll under them. Every 10 balls the level goes up.</div>
   <div><b>Power Bag:</b> 90 seconds on the heavy bag. Hit the lit numbers with the right hand, as hard as you can. The last 15 seconds are a flurry: double damage.</div>
   <div><b>Slip Line:</b> a glowing line shows where your head goes. Put your head through every ring (slip, roll under, duck), then punch the counter pad.</div>
-  <div><b>Full Workout:</b> all five drills in a row with short rests, like a real class. Endless drills stop after 60 seconds.</div>
   <div class="prof"><b>Players:</b> <input id="name1" maxlength="12" placeholder="PLAYER 1"> <input id="name2" maxlength="12" placeholder="PLAYER 2">
     <button id="p1">PLAY AS 1</button> <button id="p2">PLAY AS 2</button> <span id="pnow"></span></div>
   <div><b>Quit a round:</b> hold A, B, X or Y on a controller (Esc on desktop).</div>
   <div><b>Desktop:</b> left / right mouse button or F / J for left / right hand (hold to block in Don't Get Hit). C to duck, A / D to slip.</div>
-  <button id="start">COMBOS</button> <button id="startBalls">BALL MACHINE</button> <button id="startBag">POWER BAG</button> <button id="startLine">SLIP LINE</button> <button id="startWorkout">FULL WORKOUT</button> <button id="startDef">DON'T GET HIT</button>
+  <button id="startBalls">BALL MACHINE</button> <button id="startBag">POWER BAG</button> <button id="startLine">SLIP LINE</button> <button id="startDef">DON'T GET HIT</button>
   <div id="err"></div>
 </div>
 <script>
@@ -764,7 +761,7 @@ function drawHUD() {
 
 // ---------- stan gry ----------
 let state = 'menu', score = 0, combo = 0, maxCombo = 0, hits = 0, misses = 0, padsSeen = 0, dodgeOk = 0, dodgeSeen = 0;
-let mode = 'combo', lastMode = 'combo', comboName = '', comboWords = '', hudDirty = false;
+let mode = 'balls', lastMode = 'balls', comboName = '', comboWords = '', hudDirty = false;
 // tryb obrony
 let lives = 5, thrown = 0, dodged = 0, blocked = 0, taken = 0, nextPunchAt = 0;
 const punches = [];
@@ -1060,7 +1057,7 @@ glint.visible = false; glint.renderOrder = 9; scene.add(glint);
 const hitFlash = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2), new THREE.MeshBasicMaterial({ color: 0xff2a1a, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false }));
 hitFlash.renderOrder = 21; hitFlash.position.set(0, 0, -0.3); hitFlash.visible = false; camera.add(hitFlash);
 let flashT = 0;
-function clearPunches() { punches.length = 0; glint.visible = false; if (rm.ready) { rm.stepTo = 0; rIdle(0.2); } }
+function clearPunches() { punches.length = 0; glint.visible = false; rQueue = []; rLastCombo = null; if (rm.ready) { rm.stepTo = 0; rIdle(0.2); } }
 function throwPunch(kind) {
   const k = PKIND[kind], now = aNow();
   const S = rWorld(RGUARD[k.hand]);
@@ -1869,8 +1866,8 @@ function rHandWorld(s, out) { return (rm.bones[s].glove || rm.bones[s].hand).get
 // kontra po uniku: przez chwilę wisi cel na linii brody rywala; trafienie odrzuca mu głowę
 const counterTgt = new THREE.Group(); counterTgt.visible = false; scene.add(counterTgt);
 {
-  const disc = new THREE.Mesh(new THREE.CircleGeometry(0.1, 32), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.9, depthWrite: false, fog: false }));
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.105, 0.125, 32), new THREE.MeshBasicMaterial({ color: 0x111111, fog: false }));
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(0.1, 32), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.3, depthWrite: false, depthTest: false, fog: false }));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.125, 32), new THREE.MeshBasicMaterial({ color: 0xffd23f, depthTest: false, fog: false }));
   const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex('COUNTER!', '#ffd23f'), transparent: true, depthTest: false, fog: false }));
   lab.scale.set(0.3, 0.15, 1); lab.position.y = 0.17; lab.renderOrder = 12; disc.renderOrder = 11; ring.renderOrder = 11;
   counterTgt.add(disc, ring, lab);
@@ -1879,12 +1876,20 @@ let counterUntil = 0, counters = 0;
 // pierścień ostrzegawczy wokół lecącej rękawicy rywala: kurczy się do chwili trafienia (ten sam język co piłki)
 const punchRing = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTex, color: 0xffd23f, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false }));
 punchRing.renderOrder = 12; punchRing.visible = false; scene.add(punchRing);
+const COUNTER_TIME = 1.2;
+function counterSpot(out) {
+  // broda rywala: kość głowy trochę niżej i bliżej gracza; bez modelu stary punkt przed graczem
+  if (rm.ready && rm.look) { rm.look.bone.getWorldPosition(out); out.y -= 0.08; return out.add(tmpB.copy(head).sub(out).setY(0).normalize().multiplyScalar(0.1)); }
+  return out.set(head.x, head.y - 0.06, head.z - 0.5);
+}
 function openCounter() {
-  const now = aNow(); counterUntil = now + 0.85;
-  counterTgt.position.set(head.x, head.y - 0.06, head.z - 0.5); counterTgt.visible = true;
+  if (rQueue.length) return; // kontra dopiero po ostatnim ciosie kombinacji
+  const now = aNow(); counterUntil = now + COUNTER_TIME;
+  // rywal po chybionym ciosie zostaje wychylony blisko gracza: jego głowa ok. 0,6 m od gracza
+  counterSpot(counterTgt.position); counterTgt.visible = true;
 }
 function counterHit(side, gl) {
-  counterTgt.visible = false; counterUntil = 0; counters++;
+  counterTgt.visible = false; counterUntil = 0; counters++; rm.stepTo = 0;
   const pts = 250 + 15 * thrown; score += pts; hudDirty = true;
   popBurst(counterTgt.position.clone(), 1.5); flashSpeedLines();
   popWord(pick(['COUNTER!', 'ドン!', 'GOT HIM!']), counterTgt.position.clone().add(new THREE.Vector3(0, 0.25, -0.1)), '#ffd23f', 1.4, 0.9);
@@ -1896,9 +1901,31 @@ function counterHit(side, gl) {
 function updateCounter() {
   if (!counterTgt.visible) return;
   const now = aNow();
-  if (now > counterUntil || state !== 'fight') { counterTgt.visible = false; return; }
-  counterTgt.lookAt(head); const k = (counterUntil - now) / 0.85; counterTgt.scale.setScalar(0.85 + 0.15 * Math.sin(now * 20) * k + 0.15);
+  if (now > counterUntil || state !== 'fight') { counterTgt.visible = false; rm.stepTo = 0; nextPunchAt = Math.max(nextPunchAt === Infinity ? 0 : nextPunchAt, now + 0.4); return; }
+  counterSpot(counterTgt.position);
+  // krok rywala dobierany na bieżąco: jego głowa zostaje ok. 0,6-0,7 m od gracza (wypad z animacji ciosu się dolicza)
+  if (rm.ready && rm.look) {
+    const hp = rm.look.bone.getWorldPosition(tmpB), dist = Math.hypot(head.x - hp.x, head.z - hp.z);
+    rm.stepTo = Math.max(0, Math.min(0.9, rm.stepZ + (dist - 0.72)));
+  }
+  counterTgt.lookAt(head); const k = (counterUntil - now) / COUNTER_TIME; counterTgt.scale.setScalar(0.85 + 0.15 * Math.sin(now * 20) * k + 0.15);
   if (renderer.xr.isPresenting) for (const h of hands) if (h.has && h.vel.length() > 1.5 && h.pos.distanceTo(counterTgt.position) < 0.2) { counterHit(h.side, { h }); return; }
+}
+// zestaw ciosów rywala: od początku wszystkie rodzaje, kombinacje dochodzą w miarę gry
+const RCOMBOS = [
+  { seq: ['jab'], lvl: 0 }, { seq: ['cross'], lvl: 0 }, { seq: ['hookL'], lvl: 0 }, { seq: ['hookR'], lvl: 0 }, { seq: ['upperL'], lvl: 0 }, { seq: ['upperR'], lvl: 0 },
+  { seq: ['jab', 'cross'], lvl: 1 }, { seq: ['jab', 'hookL'], lvl: 1 }, { seq: ['cross', 'hookL'], lvl: 1 }, { seq: ['jab', 'upperR'], lvl: 1 }, { seq: ['hookL', 'hookR'], lvl: 1 }, { seq: ['upperR', 'hookL'], lvl: 1 },
+  { seq: ['jab', 'cross', 'hookL'], lvl: 2 }, { seq: ['jab', 'jab', 'cross'], lvl: 2 }, { seq: ['upperR', 'hookL', 'cross'], lvl: 2 }, { seq: ['hookL', 'upperR', 'hookL'], lvl: 2 }, { seq: ['jab', 'cross', 'upperL', 'cross'], lvl: 2 },
+];
+let rLastCombo = null, rQueue = [];
+function nextRivalCombo() {
+  const lvl = thrown < 5 ? 0 : thrown < 15 ? 1 : 2;
+  const pool = RCOMBOS.filter(c => c.lvl <= lvl && c !== rLastCombo && !(c.seq.length === 1 && rLastCombo && rLastCombo.seq.length === 1 && c.seq[0] === rLastCombo.seq[0]));
+  // świeże kombinacje z bieżącego poziomu wypadają częściej
+  const w = pool.flatMap(c => (c.lvl === lvl ? [c, c, c] : [c]));
+  const c = w[Math.floor(Math.random() * w.length)];
+  rLastCombo = c; rQueue = c.seq.slice(1);
+  return c.seq[0];
 }
 function throwPunchM(kind) {
   const c = RCLIP[kind], now = aNow();
@@ -1936,10 +1963,8 @@ function updateDefenseM(dt) {
   updateCounter();
   rival.position.x = base.x + Math.sin(now * 1.1) * 0.04;
   if (rm.reactUntil && now > rm.reactUntil && punches.length === 0) { rm.reactUntil = 0; rIdle(0.2); }
-  if (now >= nextPunchAt && punches.length === 0 && !(rm.reactUntil && now < rm.reactUntil)) {
-    const pool = thrown < 6 ? ['jab', 'cross'] : thrown < 16 ? ['jab', 'cross', 'hookL', 'hookR'] : ['jab', 'cross', 'hookL', 'hookR', 'upperL', 'upperR'];
-    throwPunchM(pick(pool));
-    if (thrown > 12 && Math.random() < 0.35) punches[punches.length - 1].double = true;
+  if (now >= nextPunchAt && punches.length === 0 && !counterTgt.visible && !(rm.reactUntil && now < rm.reactUntil)) {
+    throwPunchM(nextRivalCombo());
     nextPunchAt = Infinity;
   }
   glint.visible = false; punchRing.visible = false;
@@ -1957,11 +1982,12 @@ function updateDefenseM(dt) {
       if (u < 0.35) { glint.visible = true; glint.position.copy(hp).add(tmpB.set(0, 0.14, 0)); const sc = 0.14 + 0.08 * Math.sin(u / 0.35 * Math.PI); glint.scale.set(sc, sc, 1); }
       if (u > 0.4) for (const gl of playerGloves()) if (gl.pos.distanceTo(hp) < 0.2) { resolvePunchM(p, 'block', gl); break; }
       if (p.phase === 'fly' && now >= p.tImpact) resolvePunchM(p, head.distanceTo(hp) < 0.2 ? 'hit' : 'dodge');
-    } else if (now - p.tBack > 0.45) {
-      punches.splice(i, 1); rm.stepTo = 0;
+    } else if (now - p.tBack > (rQueue.length ? 0.22 : 0.45)) {
+      punches.splice(i, 1); if (!counterTgt.visible) rm.stepTo = 0;
       if (state !== 'fight') continue;
-      if (p.double) throwPunchM(pick(p.hand === 'L' ? ['cross', 'hookR', 'upperR'] : ['jab', 'hookL', 'upperL']));
-      else { rIdle(); nextPunchAt = Math.max(nextPunchAt === Infinity ? 0 : nextPunchAt, now + gapDur() * 0.8); }
+      // kombinacja leci dalej; trafienie przerywa ją (gracz i tak dostał)
+      if (rQueue.length && p.res !== 'hit') throwPunchM(rQueue.shift());
+      else { rQueue = []; rIdle(); nextPunchAt = Math.max(nextPunchAt === Infinity ? 0 : nextPunchAt, now + gapDur() * 0.8); }
     }
   }
 }
@@ -2316,7 +2342,7 @@ const menuPads = [];
 let menuArmAt = 0;
 function buildMenu() {
   const geo = new THREE.CylinderGeometry(0.12, 0.12, 0.07, 28); geo.rotateX(Math.PI / 2);
-  for (const [m, label, col, x, y] of [['combo', 'COMBOS', 0xffd23f, -0.36, 0.02], ['balls', 'BALL MACHINE', 0xff7a1a, 0, 0.02], ['bag', 'POWER BAG', 0xe8412c, 0.36, 0.02], ['line', 'SLIP LINE', 0x7dd3ff, -0.36, -0.42], ['workout', 'FULL WORKOUT', 0xf4f1e8, 0, -0.42], ['defense', "DON'T GET HIT", 0x7dff8a, 0.36, -0.42]]) {
+  for (const [m, label, col, x, y] of [['balls', 'BALL MACHINE', 0xff7a1a, -0.2, 0.02], ['bag', 'POWER BAG', 0xe8412c, 0.2, 0.02], ['line', 'SLIP LINE', 0x7dd3ff, -0.2, -0.42], ['defense', "DON'T GET HIT", 0x7dff8a, 0.2, -0.42]]) {
     const g = new THREE.Group();
     g.add(toon(geo, col, { outline: 0.018 }));
     const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: wordTex(label, '#fff'), transparent: true, depthTest: false, fog: false }));
@@ -2508,12 +2534,10 @@ addEventListener('keydown', e => {
   if (k === 'f') deskDown('L'); else if (k === 'j') deskDown('R');
 });
 addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (k === 'f') deskGuard.L = false; if (k === 'j') deskGuard.R = false; });
-document.getElementById('start').addEventListener('click', () => { workout = null; startCountdown('combo'); });
 document.getElementById('startDef').addEventListener('click', () => { workout = null; startCountdown('defense'); });
 document.getElementById('startBalls').addEventListener('click', () => { workout = null; startCountdown('balls'); });
 document.getElementById('startBag').addEventListener('click', () => { workout = null; startCountdown('bag'); });
 document.getElementById('startLine').addEventListener('click', () => { workout = null; startCountdown('line'); });
-document.getElementById('startWorkout').addEventListener('click', () => startWorkout());
 for (const n of [1, 2]) {
   const inp = document.getElementById('name' + n); inp.value = store.get('ana-name-' + n) || '';
   inp.addEventListener('input', () => { store.set('ana-name-' + n, inp.value.trim()); refreshProfilePads(); drawHUD(); showProfile(); });
